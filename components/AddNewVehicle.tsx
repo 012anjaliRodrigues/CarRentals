@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Car as CarIcon, 
@@ -10,6 +9,8 @@ import {
   Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'react-hot-toast';
+import { supabase, getCurrentUser } from '../supabaseClient';
 
 interface AddNewVehicleProps {
   onSave: (vehicle: any) => void;
@@ -86,6 +87,7 @@ const CustomSelect: React.FC<{
 const AddNewVehicle: React.FC<AddNewVehicleProps> = ({ onSave, onCancel }) => {
   const currentYear = new Date().getFullYear().toString();
   const todayDate = new Date().toISOString().split('T')[0];
+  const [isSaving, setIsSaving] = useState(false);
 
   const [formData, setFormData] = useState({
     type: 'Hatchback',
@@ -144,12 +146,169 @@ const AddNewVehicle: React.FC<AddNewVehicleProps> = ({ onSave, onCancel }) => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // ── Supabase save ─────────────────────────────────────────────
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isFormValid) {
-      onSave(formData);
+    if (!isFormValid || isSaving) return;
+
+    setIsSaving(true);
+    try {
+      const authUser = await getCurrentUser();
+      if (!authUser) {
+        toast.error('No session found. Please log in again.');
+        return;
+      }
+
+      // Get owner row
+      const { data: ownerRow, error: ownerErr } = await supabase
+        .from('owners')
+        .select('id')
+        .eq('user_id', authUser.id)
+        .single();
+
+      if (ownerErr || !ownerRow) {
+        toast.error('Owner profile not found.');
+        return;
+      }
+
+      const ownerId = ownerRow.id;
+
+      // Get category id for selected type
+      const { data: categoryRow, error: catErr } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('name', formData.type)
+        .single();
+
+      if (catErr || !categoryRow) {
+        toast.error('Category not found for type: ' + formData.type);
+        return;
+      }
+
+      const categoryId = categoryRow.id;
+
+      // Find or create model row
+      let modelId: string;
+      const { data: existingModel } = await supabase
+        .from('models')
+        .select('id')
+        .eq('brand', formData.brand)
+        .eq('name', formData.model)
+        .eq('category_id', categoryId)
+        .maybeSingle();
+
+      if (existingModel) {
+        modelId = existingModel.id;
+      } else {
+        const { data: newModel, error: modelErr } = await supabase
+          .from('models')
+          .insert({
+            category_id: categoryId,
+            brand: formData.brand,
+            name: formData.model,
+            default_transmission: formData.transmission,
+            default_fuel_type: formData.fuelType,
+          })
+          .select('id')
+          .single();
+
+        if (modelErr || !newModel) {
+          toast.error('Failed to create model: ' + modelErr?.message);
+          return;
+        }
+        modelId = newModel.id;
+      }
+
+      // Insert vehicle
+      const { data: newVehicle, error: vehicleErr } = await supabase
+        .from('vehicles')
+        .insert({
+          owner_id: ownerId,
+          model_id: modelId,
+          registration_no: formData.vehicleNo.trim(),
+          color: formData.color,
+          fuel_type: formData.fuelType,
+          transmission: formData.transmission,
+          mfg_year: parseInt(formData.mfgYear),
+          permit_valid_until: formData.permitValidity || null,
+          insurance_valid_until: formData.insuranceRenewal || null,
+          puc_valid_until: formData.pucExpiry || null,
+          next_oil_change_at: formData.nextOilChange || null,
+          status: 'available',
+        })
+        .select('id')
+        .single();
+
+      if (vehicleErr || !newVehicle) {
+        toast.error('Failed to save vehicle: ' + vehicleErr?.message);
+        return;
+      }
+
+      const vehicleId = newVehicle.id;
+
+      // Insert reminders for dates that were set
+      const remindersToInsert: any[] = [];
+
+      if (formData.insuranceRenewal) {
+        remindersToInsert.push({
+          owner_id: ownerId,
+          vehicle_id: vehicleId,
+          type: 'Insurance Renewal',
+          category: 'Critical',
+          due_date: formData.insuranceRenewal,
+          priority: 'High',
+          status: 'Upcoming',
+          days_remaining: Math.ceil((new Date(formData.insuranceRenewal).getTime() - Date.now()) / 86400000),
+        });
+      }
+
+      if (formData.pucExpiry) {
+        remindersToInsert.push({
+          owner_id: ownerId,
+          vehicle_id: vehicleId,
+          type: 'PUC Expiry',
+          category: 'Critical',
+          due_date: formData.pucExpiry,
+          priority: 'High',
+          status: 'Upcoming',
+          days_remaining: Math.ceil((new Date(formData.pucExpiry).getTime() - Date.now()) / 86400000),
+        });
+      }
+
+      if (formData.nextOilChange) {
+        remindersToInsert.push({
+          owner_id: ownerId,
+          vehicle_id: vehicleId,
+          type: 'Oil Change',
+          category: 'Maintenance',
+          due_date: formData.nextOilChange,
+          priority: 'Medium',
+          status: 'Upcoming',
+          days_remaining: Math.ceil((new Date(formData.nextOilChange).getTime() - Date.now()) / 86400000),
+        });
+      }
+
+      if (remindersToInsert.length > 0) {
+        await supabase.from('reminders').insert(remindersToInsert);
+      }
+
+      toast.success('Vehicle saved successfully!');
+
+      // Pass back to FleetListing for UI update
+      onSave({
+        ...formData,
+        id: vehicleId,
+        modelId,
+      });
+
+    } catch (err) {
+      console.error('Unexpected error saving vehicle:', err);
+      toast.error('Something went wrong. Please try again.');
+    } finally {
+      setIsSaving(false);
     }
   };
+  // ─────────────────────────────────────────────────────────────
 
   return (
     <motion.div 
@@ -179,57 +338,19 @@ const AddNewVehicle: React.FC<AddNewVehicleProps> = ({ onSave, onCancel }) => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-            <CustomSelect 
-              label="Type" 
-              options={types} 
-              value={formData.type} 
-              onChange={(v) => handleSelectChange('type', v)} 
-              required 
-            />
-            <CustomSelect 
-              label="Brand" 
-              options={Object.keys(brandModels)} 
-              value={formData.brand} 
-              onChange={(v) => handleSelectChange('brand', v)} 
-              required 
-            />
-            <CustomSelect 
-              label="Model" 
-              options={currentModels} 
-              value={formData.model} 
-              onChange={(v) => handleSelectChange('model', v)} 
-              required 
-            />
-            <CustomSelect 
-              label="Transmission" 
-              options={transmissions} 
-              value={formData.transmission} 
-              onChange={(v) => handleSelectChange('transmission', v)} 
-              required 
-            />
-            <CustomSelect 
-              label="Fuel Type" 
-              options={fuels} 
-              value={formData.fuelType} 
-              onChange={(v) => handleSelectChange('fuelType', v)} 
-              required 
-            />
-            <CustomSelect 
-              label="Color" 
-              options={colors} 
-              value={formData.color} 
-              onChange={(v) => handleSelectChange('color', v)} 
-              required 
-            />
+            <CustomSelect label="Type" options={types} value={formData.type} onChange={(v) => handleSelectChange('type', v)} required />
+            <CustomSelect label="Brand" options={Object.keys(brandModels)} value={formData.brand} onChange={(v) => handleSelectChange('brand', v)} required />
+            <CustomSelect label="Model" options={currentModels} value={formData.model} onChange={(v) => handleSelectChange('model', v)} required />
+            <CustomSelect label="Transmission" options={transmissions} value={formData.transmission} onChange={(v) => handleSelectChange('transmission', v)} required />
+            <CustomSelect label="Fuel Type" options={fuels} value={formData.fuelType} onChange={(v) => handleSelectChange('fuelType', v)} required />
+            <CustomSelect label="Color" options={colors} value={formData.color} onChange={(v) => handleSelectChange('color', v)} required />
 
             <div className="flex flex-col space-y-2">
               <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider">
                 Vehicle No. <span className="text-[#EF4444]">*</span>
               </label>
               <input 
-                type="text" 
-                name="vehicleNo" 
-                value={formData.vehicleNo} 
+                type="text" name="vehicleNo" value={formData.vehicleNo}
                 onChange={(e) => setFormData(p => ({ ...p, vehicleNo: e.target.value.toUpperCase() }))}
                 placeholder="e.g. GA 12 AA 1123"
                 className="w-full bg-[#EEEDFA] border border-[#d1d0eb] rounded-xl py-3.5 px-4 outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] text-[#151a3c] font-bold placeholder:text-[#6c7e96]/40"
@@ -241,12 +362,8 @@ const AddNewVehicle: React.FC<AddNewVehicleProps> = ({ onSave, onCancel }) => {
                 Manufacturing Year <span className="text-[#EF4444]">*</span>
               </label>
               <input 
-                type="number" 
-                name="mfgYear" 
-                value={formData.mfgYear} 
-                onChange={handleChange}
-                max={currentYear}
-                placeholder="2023"
+                type="number" name="mfgYear" value={formData.mfgYear}
+                onChange={handleChange} max={currentYear} placeholder="2023"
                 className="w-full bg-[#EEEDFA] border border-[#d1d0eb] rounded-xl py-3.5 px-4 outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] text-[#151a3c] font-bold"
               />
             </div>
@@ -257,11 +374,8 @@ const AddNewVehicle: React.FC<AddNewVehicleProps> = ({ onSave, onCancel }) => {
               </label>
               <div className="relative">
                 <input 
-                  type="date" 
-                  name="permitValidity" 
-                  min={todayDate}
-                  value={formData.permitValidity} 
-                  onChange={handleChange}
+                  type="date" name="permitValidity" min={todayDate}
+                  value={formData.permitValidity} onChange={handleChange}
                   className="w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-3.5 px-4 pr-12 outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] text-[#151a3c] font-medium"
                 />
                 <Calendar size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
@@ -287,11 +401,8 @@ const AddNewVehicle: React.FC<AddNewVehicleProps> = ({ onSave, onCancel }) => {
                   <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider">{rem.label}</label>
                   <div className="relative">
                     <input 
-                      type="date" 
-                      name={rem.name}
-                      min={todayDate}
-                      value={(formData as any)[rem.name]} 
-                      onChange={handleChange}
+                      type="date" name={rem.name} min={todayDate}
+                      value={(formData as any)[rem.name]} onChange={handleChange}
                       className="w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-3.5 px-4 pr-12 outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] text-[#151a3c] font-medium"
                     />
                     <Calendar size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
@@ -305,24 +416,26 @@ const AddNewVehicle: React.FC<AddNewVehicleProps> = ({ onSave, onCancel }) => {
         <div className="bg-[#f8fafc] px-8 py-6 flex items-center justify-end space-x-6 border-t border-[#d1d0eb]/30">
           <button 
             type="button"
-            onClick={() => {
-              if (formData.vehicleNo ? confirm('Discard changes?') : true) onCancel();
-            }}
+            onClick={() => { if (formData.vehicleNo ? confirm('Discard changes?') : true) onCancel(); }}
             className="text-[#6c7e96] font-bold text-sm hover:text-[#151a3c] transition-colors"
           >
             Cancel
           </button>
           <button 
             type="submit"
-            disabled={!isFormValid}
+            disabled={!isFormValid || isSaving}
             className={`px-10 py-3.5 rounded-xl font-bold text-sm transition-all flex items-center space-x-2 shadow-xl ${
-              isFormValid 
+              isFormValid && !isSaving
                 ? 'bg-[#6360DF] hover:bg-[#5451d0] text-white shadow-[#6360df33] active:scale-[0.98]' 
                 : 'bg-[#d1d0eb] text-white cursor-not-allowed shadow-none'
             }`}
           >
-            <Save size={18} />
-            <span>Save Vehicle</span>
+            {isSaving ? (
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Save size={18} />
+            )}
+            <span>{isSaving ? 'Saving...' : 'Save Vehicle'}</span>
           </button>
         </div>
       </form>

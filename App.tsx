@@ -10,7 +10,7 @@ import Dashboard from './components/Dashboard';
 import { AppState, UserProfile } from './types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
-import { getCurrentUser, getCurrentOwner, supabase } from './supabaseClient';
+import { getCurrentUser, getCurrentOwner, ensureDevSession, createOwnerIfNotExists, supabase } from './supabaseClient';
 
 const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<AppState>(AppState.SPLASH);
@@ -23,7 +23,7 @@ const App: React.FC = () => {
     isGstEnabled: false,
     gstType: 'Regular',
     gstNumber: '',
-    locations: ['Panjim']
+    locations: ['Panjim'],
   });
 
   const updateProfile = (updates: Partial<UserProfile>) => {
@@ -36,45 +36,42 @@ const App: React.FC = () => {
     return `+91 ${cleaned.slice(0, 5)} ${cleaned.slice(5)}`;
   };
 
+  // Saves owner fields to DB — only runs if a session exists
   const ownerUpdate = async (updates: Record<string, any>) => {
     const authUser = await getCurrentUser();
-    if (!authUser) return;
+    if (!authUser) {
+      console.warn('ownerUpdate: no session, skipping');
+      return;
+    }
     const { error } = await supabase
       .from('owners')
       .update(updates)
       .eq('user_id', authUser.id);
     if (error) {
-      console.error('Error updating owner onboarding/profile:', error);
+      console.error('Error updating owner:', error);
     }
   };
 
-  // Splash → Login transition (existing behavior)
+  // Splash → Login
   useEffect(() => {
     if (currentScreen === AppState.SPLASH) {
-      const timer = setTimeout(() => {
-        setCurrentScreen(AppState.LOGIN);
-      }, 3000);
+      const timer = setTimeout(() => setCurrentScreen(AppState.LOGIN), 3000);
       return () => clearTimeout(timer);
     }
   }, [currentScreen]);
 
-  // On mount: check existing session and owner to resume correct screen
+  // On mount: resume from existing session
   useEffect(() => {
     const bootstrapFromSession = async () => {
       const authUser = await getCurrentUser();
-      if (!authUser) {
-        // No session: let existing splash → login flow proceed
-        return;
-      }
+      if (!authUser) return;
 
       const owner = await getCurrentOwner();
       if (!owner) {
-        // Authenticated but no owner row yet: start onboarding
         setCurrentScreen(AppState.IDENTITY);
         return;
       }
 
-      // Map owner row into existing UserProfile shape
       updateProfile({
         fullName: owner.full_name ?? '',
         businessName: owner.business_name ?? '',
@@ -84,20 +81,18 @@ const App: React.FC = () => {
         isGstEnabled: owner.is_gst_enabled ?? false,
         gstType: owner.gst_type ?? 'Regular',
         gstNumber: owner.gst_number ?? '',
-        locations: owner.service_locations ?? userProfile.locations,
+        locations: owner.service_locations ?? ['Panjim'],
       });
 
-      const onboardingStep: number | null =
-        typeof owner.onboarding_step === 'number' ? owner.onboarding_step : null;
-      const completed = !!owner.onboarding_completed_at;
+      const step: number | null = typeof owner.onboarding_step === 'number' ? owner.onboarding_step : null;
 
-      if (completed) {
+      if (owner.onboarding_completed_at) {
         setCurrentScreen(AppState.DASHBOARD);
-      } else if (!onboardingStep || onboardingStep <= 1) {
+      } else if (!step || step <= 1) {
         setCurrentScreen(AppState.IDENTITY);
-      } else if (onboardingStep === 2) {
+      } else if (step === 2) {
         setCurrentScreen(AppState.GST);
-      } else if (onboardingStep === 3) {
+      } else if (step === 3) {
         setCurrentScreen(AppState.LOCATIONS);
       } else {
         setCurrentScreen(AppState.DASHBOARD);
@@ -108,35 +103,39 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ─── Dev: Skip to Onboarding ──────────────────────────────────────────────
+  // Creates a real Supabase session via email+password so all DB writes work.
+  // No UI change — same button, just now saves real data.
+  const handleSkipToOnboarding = async () => {
+    const userId = await ensureDevSession();
+    if (!userId) {
+      console.error('Could not create dev session');
+      setCurrentScreen(AppState.IDENTITY); // still navigate, saves will just fail silently
+      return;
+    }
+    // Bootstrap owner row so ownerUpdate has something to UPDATE (not INSERT)
+    await createOwnerIfNotExists(userId, 'dev_owner');
+    setCurrentScreen(AppState.IDENTITY);
+  };
+
   return (
     <div className="min-h-screen bg-[#D3D2EC]">
       <Toaster position="top-right" />
       <AnimatePresence mode="wait">
+
         {currentScreen === AppState.SPLASH && (
-          <motion.div
-            key="splash"
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.5 }}
-          >
+          <motion.div key="splash" initial={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}>
             <SplashScreen />
           </motion.div>
         )}
 
         {currentScreen === AppState.LOGIN && (
-          <motion.div
-            key="login"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.4 }}
-          >
-            <LoginScreen 
+          <motion.div key="login" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.4 }}>
+            <LoginScreen
               onOtpSent={(phone) => {
-                // store 10-digit for OTP screen usage
                 updateProfile({ phone });
                 setCurrentScreen(AppState.OTP);
-              }} 
+              }}
               onSkipToDashboard={() => {
                 updateProfile({
                   fullName: 'Arjun Sharma',
@@ -147,26 +146,20 @@ const App: React.FC = () => {
                   isGstEnabled: true,
                   gstType: 'Regular',
                   gstNumber: '30AAACG1234A1Z5',
-                  locations: ['Mapusa', 'Panjim', 'Calangute', 'Airport']
+                  locations: ['Mapusa', 'Panjim', 'Calangute', 'Airport'],
                 });
                 setCurrentScreen(AppState.DASHBOARD);
               }}
+              onSkipToOnboarding={handleSkipToOnboarding}
             />
           </motion.div>
         )}
 
         {currentScreen === AppState.OTP && (
-          <motion.div
-            key="otp"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.4 }}
-          >
-            <OtpScreen 
+          <motion.div key="otp" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.4 }}>
+            <OtpScreen
               phoneNumber={(userProfile.phone || '').replace(/\D/g, '').slice(-10)}
               onVerify={({ nextScreen, owner }) => {
-                // If we have owner data, hydrate profile from it
                 if (owner) {
                   const digits = (owner?.phone || userProfile.phone || '').replace(/\D/g, '').slice(-10);
                   updateProfile({
@@ -181,16 +174,10 @@ const App: React.FC = () => {
                     locations: owner.service_locations ?? userProfile.locations,
                   });
                 }
-
-                if (nextScreen === 'IDENTITY') {
-                  setCurrentScreen(AppState.IDENTITY);
-                } else if (nextScreen === 'GST') {
-                  setCurrentScreen(AppState.GST);
-                } else if (nextScreen === 'LOCATIONS') {
-                  setCurrentScreen(AppState.LOCATIONS);
-                } else {
-                  setCurrentScreen(AppState.DASHBOARD);
-                }
+                if (nextScreen === 'IDENTITY') setCurrentScreen(AppState.IDENTITY);
+                else if (nextScreen === 'GST') setCurrentScreen(AppState.GST);
+                else if (nextScreen === 'LOCATIONS') setCurrentScreen(AppState.LOCATIONS);
+                else setCurrentScreen(AppState.DASHBOARD);
               }}
               onBack={() => setCurrentScreen(AppState.LOGIN)}
             />
@@ -198,14 +185,8 @@ const App: React.FC = () => {
         )}
 
         {currentScreen === AppState.IDENTITY && (
-          <motion.div
-            key="identity"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.4 }}
-          >
-            <IdentityScreen 
+          <motion.div key="identity" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.4 }}>
+            <IdentityScreen
               onContinue={async (data) => {
                 updateProfile(data);
                 await ownerUpdate({
@@ -216,24 +197,18 @@ const App: React.FC = () => {
                   onboarding_step: 2,
                 });
                 setCurrentScreen(AppState.GST);
-              }} 
+              }}
               onLogout={async () => {
                 await supabase.auth.signOut();
                 setCurrentScreen(AppState.LOGIN);
-              }} 
+              }}
             />
           </motion.div>
         )}
 
         {currentScreen === AppState.GST && (
-          <motion.div
-            key="gst"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.4 }}
-          >
-            <GstScreen 
+          <motion.div key="gst" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.4 }}>
+            <GstScreen
               onContinue={async (data) => {
                 updateProfile(data);
                 await ownerUpdate({
@@ -250,14 +225,8 @@ const App: React.FC = () => {
         )}
 
         {currentScreen === AppState.LOCATIONS && (
-          <motion.div
-            key="locations"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.4 }}
-          >
-            <LocationScreen 
+          <motion.div key="locations" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.4 }}>
+            <LocationScreen
               onComplete={async (locations) => {
                 updateProfile({ locations });
                 const uniqueLocations = Array.from(new Set(['Panjim', ...(locations || [])]));
@@ -274,35 +243,23 @@ const App: React.FC = () => {
         )}
 
         {currentScreen === AppState.SUCCESS && (
-          <motion.div
-            key="success"
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <SuccessScreen 
-              onFinish={() => setCurrentScreen(AppState.DASHBOARD)} 
-            />
+          <motion.div key="success" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}>
+            <SuccessScreen onFinish={() => setCurrentScreen(AppState.DASHBOARD)} />
           </motion.div>
         )}
 
         {currentScreen === AppState.DASHBOARD && (
-          <motion.div
-            key="dashboard"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.8 }}
-          >
-            <Dashboard 
+          <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8 }}>
+            <Dashboard
               initialProfile={userProfile}
               onLogout={async () => {
                 await supabase.auth.signOut();
                 setCurrentScreen(AppState.LOGIN);
-              }} 
+              }}
             />
           </motion.div>
         )}
+
       </AnimatePresence>
     </div>
   );

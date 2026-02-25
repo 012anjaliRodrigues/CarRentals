@@ -1,5 +1,4 @@
-
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   MapPin, 
   X, 
@@ -12,7 +11,108 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 
 const ALL_LOCATIONS = [
-  "Agonda Beach", "Airport Taxi Counter", "Amboli Falls", "Anjuna Beach", "Anjuna Flea Market", "Apollo Victor Hospital (Margao)", "Arpora Nightlife Zone", "Arossim Beach", "Arossim Quiet Resorts", "Arvalem Falls", "Ashwem Beach", "Assagao Luxury Villas", "Axis Bank (Panjim, Porvorim, Margao)", "Baga Beach", "Baga Nightlife Zone", "Baga Water Sports Hub", "Bank of Baroda (Panjim, Margao, Vasco)", "Bambolim Beach", "Betalbatim Beach", "Betalbatim Beach Hotels", "Betim Ferry Point", "Big Bazaar Complex (Vasco)", "Bicholim", "Bogmalo Beach", "Bondla Wildlife Sanctuary", "Butterfly Beach", "Butterfly Conservatory of Goa", "Cab de Rama Beach", "Cab de Rama Fort (Canacona)", "Calangute Beach", "Calangute Tourist Hub", "Calangute Water Sports Zone", "Calangute-Baga Hotel Belt", "Calangute-Baga Stretch", "Canara Bank (Panjim, Margao)", "Canacona", "Canacona Railway Station", "Candolim Beach", "Candolim Water Activities", "Candolim-Sinquerim Hotel Zone", "Candolim-Sinquerim Belt", "Cansaulim Beach", "Cansaulim Airport Proximity Hotels", "Carmel College for Women (Nuvem)", "Caranzalem", "Caranzalem Beach", "Castle Rock Railway Station", "Cavelossim Beach", "Cavelossim Luxury Zone", "Cazaulim Industrial Area", "Chapora Beach", "Chapora Fort (Vagator)", "Chaudi", "Chorao Island", "Church of St. Cajetan (Old Goa)", "Church of St. Francis of Assisi (Old Goa)", "City Centre Mall (Margao)", "Colva Beach", "Colva-Benaulim Resort Belt", "Colva-Benaulim Stretch", "Corjuem Fort", "Corlim", "Corlim Industrial Estate", "Cortalim", "Cortalim Industrial Area", "Cotigao Wildlife Sanctuary", "Curchorem", "Curchorem Bus Stand", "Curtorim", "DMart (Porvorim, Margao)", "Dabolim Airport", "Divar Island", "Divine Mercy Hospital (Panjim)", "Don Bosco High School (Panjim)", "Dona Paula Beach", "Dona Paula Scenic Viewpoint", "Dr. Salim Ali Bird Sanctuary", "Dudhsagar Falls", "Dudhsagar Falls Entry Point", "Eagle House (Old Goa)", "ELCOT IT Park (Panjim)", "Eye Care Center (Panjim)", "Federal Bank (Panjim, Margao)", "Fire Station (Panjim, Margao, Vasco)", "Fontainhas (Latin Quarter)", "Fort Aguada (Sinquerim)", "Fr. Agnel School (Verna)", "Galgibaga Beach", "Galgibaga Turtle Beach", "GCA Business Hub (Panjim)", "Goa College of Engineering (Farmagudi)", "Goa College of Music (Panjim)", "Goa College of Pharmacy (Panjim)", "Goa International Airport (Dabolim)", "Goa Legislative Assembly (Porvorim)", "Goa Medical College (Bambolim)", "Goa Medical College Hospital (Bambolim)", "Goa University (Taleigao)", "Government College of Arts & Science (Khandola)", "Healthway Hospital (Vasco)", "Hilltop Flea Market (Vagator)", "Hollant Beach", "Holy Spirit Hospital (Margao)", "Hosmat Hospital (Panjim)", "ICICI Bank (Panjim, Margao, Vasco)", "IDBI Bank (Panjim, Vasco)", "Income Tax Office (Panjim)", "Indian Institute of Hotel Management (Porvorim)", "Ingo's Saturday Night Market", "Kakolem Beach (Tiger Beach)", "Karmali Railway Station (Old Goa)", "Keri Beach", "Kotak Mahindra Bank (Panjim, Margao)", "Kundaim Industrial Estate", "Kuskem Falls", "Lifeline Hospital (Panjim)", "Loutolim Industrial Area", "Mackie's Night Bazaar (Arpora)", "Madgaon Railway Station (Margao)", "Madgaon/Margao", "Mahatma Gandhi Market (Panjim)", "Majorda Beach", "Majorda Family Resorts", "Malim Jetty", "Mall De Goa (Porvorim)", "Manohar International Airport (Mopa)", "Mapusa", "Mapusa Bus Stand", "Mapusa Commercial Hub", "Mapusa Friday Market", "Margao Bus Stand", "Margao Commercial District", "Margao Commercial Hub", "Margao Municipal Market", "Marina Hospital (Dona Paula)", "Merces", "Miramar Beach", "Mobor Beach", "Mobor Water Sports Center", "Mobor-Canacona Hotel Strip", "Mollem National Park", "Morjim Beach", "Morjim-Ashwem Resort Strip", "Mount Mary Convent High School (Chinchinim)", "Nagoa", "Nanuz Fort", "National Institute of Technology Goa (Farmagudi)", "Navelim", "Netravali Bubble Lake", "Nehru Hospital (Margao)", "Nerul", "Nerul Riverside Hotels", "Old Goa", "Old Goa Ferry Point", "Orlim", "Ozran Beach (Little Vagator)", "Ozran Hotel Area", "Palolem Beach", "Palolem Kayaking Zone", "Palolem-Patnem Eco-Resort Area", "Panaji/Panjim - Capital", "Panjim Bus Stand (Kadamba)", "Panjim Business District", "Panjim Main Market", "Panjim Taxi Stand", "Panjim Ferry Point (to Chorao)", "Parvatibai Chowgule College (Margao)", "Passport Office (Panjim)", "Patnem Beach", "Patnem Yoga Zone", "Pernem", "Pernem Railway Station", "Pilerne", "Pilerne Industrial Estate", "Ponda", "Ponda Bus Stand", "Ponda Commercial Hub", "Ponda Fort", "Ponda Spice Plantations", "Police Headquarters (Panjim)", "Pole Pole Beach", "Porvorim", "Porvorim IT Park", "Post Office (Main - Panjim, Margao)", "Punjab National Bank (Panjim, Margao)", "Quepem", "Quepem Heritage Town", "Raia", "Railway Station Taxi Counters", "Raj Bhavan (Panjim)", "Reis Magos Fort (Bardez)", "Reliance Mall (Margao)", "Ribander Ferry Point", "Rosary College (Navelim)", "RT Office (Panjim, Margao, Vasco)", "Salim Ali Bird Sanctuary (Chorao Island)", "Sancoale Industrial Zone", "Sanquelim", "Sanvordem", "Sanvordem Railway Station", "Saturday Night Market (Arpora)", "Secretariat (Panjim)", "Se Cathedral (Old Goa)", "Sernabatim Beach", "Sernabatim Beach Hotels", "Sharada Mandir School (Miramar)", "Shoppers Stop (Porvorim)", "Siolim", "Siolim Boutique Hotels", "Sinquerim Beach", "Sinquerim Parasailing Zone", "Society of Jesus Church (Old Goa)", "Spice Plantation Tour Centers", "St. Cruz", "St. Estevam Island", "St. Xavier's College (Mapusa)", "State Bank of India (Panjim, Margao, Vasco)", "Taleigao", "Terekhol Fort (Keri)", "Tibetan Market (Anjuna)", "Valpoi", "Valpoi Bus Stand", "Vanxim Island", "Varca Beach", "Varca-Cavelossim Luxury Zone", "Vasco da Gama", "Vasco Bus Stand", "Vasco Commercial Center", "Vasco da Gama Railway Station", "Velsao Beach", "Victor Hospital (Margao)", "Vidya Prabodhini Parivar School (Porvorim)", "Wockhardt Hospital (Margao)"
+  // North Goa - Main Towns
+  "Panaji (Panjim)", "Mapusa", "Porvorim", "Pernem", "Bicholim", "Sanquelim",
+  // North Goa - Beaches
+  "Calangute", "Baga", "Anjuna", "Candolim", "Sinquerim", "Vagator", "Arambol",
+  "Morjim", "Ashwem", "Mandrem", "Chapora",
+  // North Goa - Localities
+  "Ribandar", "Old Goa", "Fontainhas", "Altinho", "Miramar", "Dona Paula",
+  "Bambolim", "Taleigao", "Caranzalem", "Aldona", "Saligao", "Assagao", "Siolim",
+  // South Goa - Main Towns
+  "Margao (Madgaon)", "Vasco da Gama", "Ponda", "Curchorem", "Quepem", "Canacona",
+  // South Goa - Beaches
+  "Colva", "Benaulim", "Varca", "Cavelossim", "Mobor", "Agonda", "Palolem", "Patnem",
+  // South Goa - Localities
+  "Loutolim", "Raia", "Curtorim", "Chandor", "Rachol", "Verna", "Dabolim",
+  "Bogmalo", "Fatorda", "Zuarinagar",
+  // Transport Hubs
+  "Goa Airport (Dabolim)", "Mopa Airport (Pernem)", "Madgaon Railway Station",
+  "Thivim Railway Station", "Vasco Railway Station", "Panaji Bus Stand",
+  "Margao Bus Stand", "Mapusa Bus Stand",
+  // Commercial
+  "Panjim CBD", "Margao Commercial Area", "Mapusa Market", "Goa IT Park (Verna)",
+  // Detailed locations
+  "Agonda Beach", "Airport Taxi Counter", "Amboli Falls", "Anjuna Beach",
+  "Anjuna Flea Market", "Apollo Victor Hospital (Margao)", "Arpora Nightlife Zone",
+  "Arossim Beach", "Arossim Quiet Resorts", "Arvalem Falls", "Ashwem Beach",
+  "Assagao Luxury Villas", "Axis Bank (Panjim, Porvorim, Margao)", "Baga Beach",
+  "Baga Nightlife Zone", "Baga Water Sports Hub",
+  "Bank of Baroda (Panjim, Margao, Vasco)", "Bambolim Beach", "Betalbatim Beach",
+  "Betalbatim Beach Hotels", "Betim Ferry Point", "Big Bazaar Complex (Vasco)",
+  "Bogmalo Beach", "Bondla Wildlife Sanctuary", "Butterfly Beach",
+  "Butterfly Conservatory of Goa", "Cab de Rama Beach", "Cab de Rama Fort (Canacona)",
+  "Calangute Beach", "Calangute Tourist Hub", "Calangute Water Sports Zone",
+  "Calangute-Baga Hotel Belt", "Calangute-Baga Stretch",
+  "Canara Bank (Panjim, Margao)", "Canacona Railway Station", "Candolim Beach",
+  "Candolim Water Activities", "Candolim-Sinquerim Hotel Zone",
+  "Candolim-Sinquerim Belt", "Cansaulim Beach",
+  "Cansaulim Airport Proximity Hotels", "Carmel College for Women (Nuvem)",
+  "Caranzalem Beach", "Castle Rock Railway Station", "Cavelossim Beach",
+  "Cavelossim Luxury Zone", "Cazaulim Industrial Area", "Chapora Beach",
+  "Chapora Fort (Vagator)", "Chaudi", "Chorao Island",
+  "Church of St. Cajetan (Old Goa)", "Church of St. Francis of Assisi (Old Goa)",
+  "City Centre Mall (Margao)", "Colva Beach", "Colva-Benaulim Resort Belt",
+  "Colva-Benaulim Stretch", "Corjuem Fort", "Corlim", "Corlim Industrial Estate",
+  "Cortalim", "Cortalim Industrial Area", "Cotigao Wildlife Sanctuary",
+  "Curchorem Bus Stand", "DMart (Porvorim, Margao)", "Dabolim Airport",
+  "Divar Island", "Divine Mercy Hospital (Panjim)", "Don Bosco High School (Panjim)",
+  "Dona Paula Beach", "Dona Paula Scenic Viewpoint", "Dr. Salim Ali Bird Sanctuary",
+  "Dudhsagar Falls", "Dudhsagar Falls Entry Point", "Eagle House (Old Goa)",
+  "ELCOT IT Park (Panjim)", "Eye Care Center (Panjim)",
+  "Federal Bank (Panjim, Margao)", "Fire Station (Panjim, Margao, Vasco)",
+  "Fontainhas (Latin Quarter)", "Fort Aguada (Sinquerim)", "Fr. Agnel School (Verna)",
+  "Galgibaga Beach", "Galgibaga Turtle Beach", "GCA Business Hub (Panjim)",
+  "Goa College of Engineering (Farmagudi)", "Goa College of Music (Panjim)",
+  "Goa College of Pharmacy (Panjim)", "Goa International Airport (Dabolim)",
+  "Goa Legislative Assembly (Porvorim)", "Goa Medical College (Bambolim)",
+  "Goa Medical College Hospital (Bambolim)", "Goa University (Taleigao)",
+  "Government College of Arts & Science (Khandola)", "Healthway Hospital (Vasco)",
+  "Hilltop Flea Market (Vagator)", "Hollant Beach", "Holy Spirit Hospital (Margao)",
+  "Hosmat Hospital (Panjim)", "ICICI Bank (Panjim, Margao, Vasco)",
+  "IDBI Bank (Panjim, Vasco)", "Income Tax Office (Panjim)",
+  "Indian Institute of Hotel Management (Porvorim)", "Ingo's Saturday Night Market",
+  "Kakolem Beach (Tiger Beach)", "Karmali Railway Station (Old Goa)", "Keri Beach",
+  "Kotak Mahindra Bank (Panjim, Margao)", "Kundaim Industrial Estate", "Kuskem Falls",
+  "Lifeline Hospital (Panjim)", "Loutolim Industrial Area",
+  "Mackie's Night Bazaar (Arpora)", "Madgaon Railway Station (Margao)",
+  "Madgaon/Margao", "Mahatma Gandhi Market (Panjim)", "Majorda Beach",
+  "Majorda Family Resorts", "Malim Jetty", "Mall De Goa (Porvorim)",
+  "Manohar International Airport (Mopa)", "Mapusa Commercial Hub",
+  "Mapusa Friday Market", "Margao Commercial District", "Margao Commercial Hub",
+  "Margao Municipal Market", "Marina Hospital (Dona Paula)", "Merces", "Miramar Beach",
+  "Mobor Beach", "Mobor Water Sports Center", "Mobor-Canacona Hotel Strip",
+  "Mollem National Park", "Morjim Beach", "Morjim-Ashwem Resort Strip",
+  "Mount Mary Convent High School (Chinchinim)", "Nagoa", "Nanuz Fort",
+  "National Institute of Technology Goa (Farmagudi)", "Navelim",
+  "Netravali Bubble Lake", "Nehru Hospital (Margao)", "Nerul",
+  "Nerul Riverside Hotels", "Old Goa Ferry Point", "Orlim",
+  "Ozran Beach (Little Vagator)", "Ozran Hotel Area", "Palolem Beach",
+  "Palolem Kayaking Zone", "Palolem-Patnem Eco-Resort Area",
+  "Panaji/Panjim - Capital", "Panjim Bus Stand (Kadamba)", "Panjim Business District",
+  "Panjim Main Market", "Panjim Taxi Stand", "Panjim Ferry Point (to Chorao)",
+  "Parvatibai Chowgule College (Margao)", "Passport Office (Panjim)", "Patnem Beach",
+  "Patnem Yoga Zone", "Pernem Railway Station", "Pilerne",
+  "Pilerne Industrial Estate", "Ponda Bus Stand", "Ponda Commercial Hub",
+  "Ponda Fort", "Ponda Spice Plantations", "Police Headquarters (Panjim)",
+  "Pole Pole Beach", "Porvorim IT Park", "Post Office (Main - Panjim, Margao)",
+  "Punjab National Bank (Panjim, Margao)", "Quepem Heritage Town",
+  "Railway Station Taxi Counters", "Raj Bhavan (Panjim)",
+  "Reis Magos Fort (Bardez)", "Reliance Mall (Margao)", "Ribander Ferry Point",
+  "Rosary College (Navelim)", "RT Office (Panjim, Margao, Vasco)",
+  "Salim Ali Bird Sanctuary (Chorao Island)", "Sancoale Industrial Zone",
+  "Sanvordem", "Sanvordem Railway Station", "Saturday Night Market (Arpora)",
+  "Secretariat (Panjim)", "Se Cathedral (Old Goa)", "Sernabatim Beach",
+  "Sernabatim Beach Hotels", "Sharada Mandir School (Miramar)",
+  "Shoppers Stop (Porvorim)", "Siolim Boutique Hotels", "Sinquerim Beach",
+  "Sinquerim Parasailing Zone", "Society of Jesus Church (Old Goa)",
+  "Spice Plantation Tour Centers", "St. Cruz", "St. Estevam Island",
+  "St. Xavier's College (Mapusa)", "State Bank of India (Panjim, Margao, Vasco)",
+  "Terekhol Fort (Keri)", "Tibetan Market (Anjuna)", "Valpoi", "Valpoi Bus Stand",
+  "Vanxim Island", "Varca Beach", "Varca-Cavelossim Luxury Zone",
+  "Vasco Bus Stand", "Vasco Commercial Center", "Vasco da Gama Railway Station",
+  "Velsao Beach", "Victor Hospital (Margao)",
+  "Vidya Prabodhini Parivar School (Porvorim)", "Wockhardt Hospital (Margao)"
 ];
 
 interface LocationScreenProps {
@@ -26,20 +126,33 @@ const LocationScreen: React.FC<LocationScreenProps> = ({ onComplete, onBack }) =
     "Calangute Beach",
     "Baga Beach"
   ]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+  // ── close dropdown on outside click ──────────────────────────
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+  // ─────────────────────────────────────────────────────────────
 
   const handleComplete = () => {
     onComplete(selectedLocations);
   };
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const filteredLocations = useMemo(() => {
     if (!searchQuery.trim()) return [];
-    return ALL_LOCATIONS.filter(loc => 
-      loc.toLowerCase().includes(searchQuery.toLowerCase()) && 
+    return ALL_LOCATIONS.filter(loc =>
+      loc.toLowerCase().includes(searchQuery.toLowerCase()) &&
       !selectedLocations.includes(loc) &&
       loc !== "Panjim"
-    ).slice(0, 6);
+    ).slice(0, 8);
   }, [searchQuery, selectedLocations]);
 
   const addLocation = (loc: string) => {
@@ -105,13 +218,13 @@ const LocationScreen: React.FC<LocationScreenProps> = ({ onComplete, onBack }) =
         </div>
 
         {/* Operational Service Areas */}
-        <div className="mb-10 relative">
+        {/* ── ref attached here so outside clicks close the dropdown ── */}
+        <div className="mb-10 relative" ref={dropdownRef}>
           <label className="text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase mb-3 block">
             Operational Service Areas
           </label>
           
           <div className="bg-white border border-[#d1d0eb] rounded-2xl p-3 min-h-[140px] focus-within:ring-2 focus-within:ring-[#6360DF]/10 focus-within:border-[#6360DF] transition-all">
-            {/* Tags Container */}
             <div className="flex flex-wrap gap-2 p-1">
               <AnimatePresence>
                 {selectedLocations.map((loc) => (
@@ -123,7 +236,7 @@ const LocationScreen: React.FC<LocationScreenProps> = ({ onComplete, onBack }) =
                     className="bg-[#EEEDFA] text-[#6360DF] px-4 py-2 rounded-xl flex items-center space-x-2 text-sm font-semibold"
                   >
                     <span>{loc}</span>
-                    <button 
+                    <button
                       onClick={() => removeLocation(loc)}
                       className="hover:bg-[#6360DF]/10 rounded-full p-0.5 transition-colors"
                     >
@@ -133,8 +246,8 @@ const LocationScreen: React.FC<LocationScreenProps> = ({ onComplete, onBack }) =
                 ))}
               </AnimatePresence>
               
-              {/* Search Input */}
-              <div className="flex-1 min-w-[150px] relative">
+              {/* Search Input — no onBlur */}
+              <div className="flex-1 min-w-[150px]">
                 <input
                   type="text"
                   value={searchQuery}
@@ -176,36 +289,36 @@ const LocationScreen: React.FC<LocationScreenProps> = ({ onComplete, onBack }) =
             )}
           </AnimatePresence>
           
-          {/* Static list suggestion items (like in image) */}
+          {/* Static list suggestion items */}
           <div className="mt-4 border border-[#f1f5f9] rounded-2xl overflow-hidden divide-y divide-[#f8fafc]">
-             {["Manohar International Airport (Mopa)", "Madgaon Railway Station", "Candolim Beach"].map(loc => (
-                <div key={loc} className="px-6 py-4 flex items-center justify-between">
-                   <span className="text-sm font-medium text-[#6c7e96]">{loc}</span>
-                   <button 
-                     onClick={() => addLocation(loc)}
-                     className={`p-1 rounded-full ${selectedLocations.includes(loc) ? 'text-[#6360DF] bg-[#EEEDFA]' : 'text-[#cbd5e1] hover:text-[#6360DF]'}`}
-                   >
-                     {selectedLocations.includes(loc) ? <Check size={16} /> : <Plus size={18} />}
-                   </button>
-                </div>
-             ))}
-             <div className="px-6 py-4 flex items-center justify-between bg-[#f8fafc] border-l-2 border-[#6360DF]">
-                <span className="text-sm font-semibold text-[#6360DF]">Anjuna Beach</span>
-                <CheckCircle2 size={18} className="text-[#6360DF]" />
-             </div>
+            {["Manohar International Airport (Mopa)", "Madgaon Railway Station", "Candolim Beach"].map(loc => (
+              <div key={loc} className="px-6 py-4 flex items-center justify-between">
+                <span className="text-sm font-medium text-[#6c7e96]">{loc}</span>
+                <button
+                  onClick={() => addLocation(loc)}
+                  className={`p-1 rounded-full ${selectedLocations.includes(loc) ? 'text-[#6360DF] bg-[#EEEDFA]' : 'text-[#cbd5e1] hover:text-[#6360DF]'}`}
+                >
+                  {selectedLocations.includes(loc) ? <Check size={16} /> : <Plus size={18} />}
+                </button>
+              </div>
+            ))}
+            <div className="px-6 py-4 flex items-center justify-between bg-[#f8fafc] border-l-2 border-[#6360DF]">
+              <span className="text-sm font-semibold text-[#6360DF]">Anjuna Beach</span>
+              <CheckCircle2 size={18} className="text-[#6360DF]" />
+            </div>
           </div>
         </div>
 
         {/* Footer Actions */}
         <div className="flex items-center justify-between pt-6 border-t border-[#f1f5f9]">
-          <button 
+          <button
             onClick={onBack}
             className="flex items-center space-x-2 text-[#6c7e96] text-sm font-bold hover:text-[#151a3c] transition-colors"
           >
             <ArrowLeft size={18} />
             <span>Back</span>
           </button>
-          <button 
+          <button
             onClick={handleComplete}
             className="bg-[#6360DF] hover:bg-[#5451d0] text-white font-bold py-4 px-10 rounded-2xl shadow-[0_6px_20px_rgba(99,96,223,0.3)] transition-all active:scale-[0.98] flex items-center space-x-3 group"
           >

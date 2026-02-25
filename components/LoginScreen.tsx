@@ -6,9 +6,10 @@ import { toast } from 'react-hot-toast';
 interface LoginScreenProps {
   onOtpSent: (phone: string) => void;
   onSkipToDashboard?: () => void;
+  onSkipToOnboarding?: () => void;  // ← new
 }
 
-const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard }) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard, onSkipToOnboarding }) => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -21,22 +22,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard 
 
     try {
       setIsLoading(true);
-
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: fullPhone,
-      });
-
+      const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
       if (error) {
-        console.error('Error sending OTP:', error);
         toast.error(error.message || 'Failed to send OTP. Please try again.');
         return;
       }
-
-      // Proceed to OTP screen with the 10-digit number (UI expectation)
       onOtpSent(cleaned);
       toast.success('OTP sent successfully');
     } catch (err) {
-      console.error('Unexpected error sending OTP:', err);
       toast.error('Something went wrong while sending OTP.');
     } finally {
       setIsLoading(false);
@@ -45,28 +38,19 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard 
 
   return (
     <div className="min-h-screen bg-[#D3D2EC] flex flex-col items-center justify-center p-4">
-      {/* Login Card */}
       <div className="bg-white rounded-[2rem] shadow-[0_10px_30px_rgba(0,0,0,0.05)] w-full max-w-[440px] p-10 md:p-12 text-center">
-        
-        {/* Logo Icon */}
         <div className="flex justify-center mb-6">
           <div className="w-14 h-14 bg-[#6360DF] rounded-2xl flex items-center justify-center shadow-lg shadow-[#6360df22]">
             <Car className="text-white w-7 h-7" />
           </div>
         </div>
-
-        {/* Heading */}
         <h2 className="text-3xl font-bold text-[#151a3c] mb-10 tracking-tight">
           Sign in to your business
         </h2>
-
         <form onSubmit={handleSubmit} className="text-left">
-          {/* Label */}
           <label className="block text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase mb-3 ml-1">
             Business Phone Number
           </label>
-          
-          {/* Input Group */}
           <div className="flex items-center border border-[#d1d0eb] rounded-2xl overflow-hidden mb-8 focus-within:ring-2 focus-within:ring-[#6360DF] focus-within:border-transparent transition-all">
             <div className="px-5 py-4 text-[#6c7e96] font-semibold border-r border-[#d1d0eb] bg-white">
               +91
@@ -81,8 +65,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard 
               className="w-full py-4 px-5 text-[#151a3c] font-medium placeholder:text-[#d1d0eb] outline-none bg-white"
             />
           </div>
-
-          {/* Button */}
           <button
             type="submit"
             disabled={phoneNumber.length < 10 || isLoading}
@@ -92,13 +74,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard 
           >
             {isLoading ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-            ) : (
-              "Send OTP"
-            )}
+            ) : 'Send OTP'}
           </button>
         </form>
-
-        {/* Legal Text */}
         <div className="mt-12">
           <p className="text-[12px] leading-relaxed text-[#6c7e96]/70">
             By continuing, you agree to GaadiZai's <a href="#" className="underline">Terms</a> and <br />
@@ -107,13 +85,20 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard 
         </div>
       </div>
 
-      {/* Support Link (Outside Card) */}
       <div className="mt-8 flex flex-col items-center space-y-4">
-        <div 
+        <div
           onClick={onSkipToDashboard}
           className="bg-white/50 hover:bg-white border border-[#d1d0eb] px-4 py-2 rounded-full text-[11px] font-bold text-[#6360DF] cursor-pointer transition-all active:scale-95 shadow-sm"
         >
           Skip to Dashboard (Demo)
+        </div>
+
+        {/* ← new button, same style */}
+        <div
+          onClick={onSkipToOnboarding}
+          className="bg-white/50 hover:bg-white border border-[#d1d0eb] px-4 py-2 rounded-full text-[11px] font-bold text-[#6360DF] cursor-pointer transition-all active:scale-95 shadow-sm"
+        >
+          Skip to Onboarding (Dev)
         </div>
 
         <div className="flex items-center space-x-2 text-[#151a3c] opacity-60 hover:opacity-100 transition-opacity cursor-pointer group">

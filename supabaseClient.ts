@@ -5,22 +5,54 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Helper function to get current user (from Supabase Auth)
-export const getCurrentUser = async () => {
-  const {
-    data: { session },
-    error,
-  } = await supabase.auth.getSession();
+// ─── Dev Session ────────────────────────────────────────────────────────────
+// Creates a fake email-based auth session for dev/demo use.
+// This lets RLS policies pass so all DB writes work without real phone OTP.
+// In production this is never called — OTP flow creates the real session.
 
+const DEV_EMAIL = 'dev_owner@gaadidev.local';
+const DEV_PASSWORD = 'devpassword_gzai_2024';
+
+export const ensureDevSession = async (): Promise<string | null> => {
+  // If session already exists, return the user id
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.user) return session.user.id;
+
+  // Try sign in first
+  const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+    email: DEV_EMAIL,
+    password: DEV_PASSWORD,
+  });
+
+  if (!signInError && signInData.user) {
+    return signInData.user.id;
+  }
+
+  // First time — sign up
+  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+    email: DEV_EMAIL,
+    password: DEV_PASSWORD,
+  });
+
+  if (signUpError) {
+    console.error('Dev session creation failed:', signUpError.message);
+    return null;
+  }
+
+  return signUpData.user?.id ?? null;
+};
+
+// ─── Auth Helpers ────────────────────────────────────────────────────────────
+
+export const getCurrentUser = async () => {
+  const { data: { session }, error } = await supabase.auth.getSession();
   if (error) {
     console.error('Error getting current session:', error);
     return null;
   }
-
   return session?.user || null;
 };
 
-// Helper function to get owner data for current auth user
 export const getCurrentOwner = async () => {
   const user = await getCurrentUser();
   if (!user) return null;
@@ -39,11 +71,9 @@ export const getCurrentOwner = async () => {
   return data;
 };
 
-// Helper: create owner row if it does not exist, and return owner
-// userId: Supabase auth.users.id
-// phone: E.164 phone (e.g. +919876543210) – currently only used for future extension
+// ─── Owner Bootstrap ─────────────────────────────────────────────────────────
+
 export const createOwnerIfNotExists = async (userId: string, phone: string) => {
-  // Try to find existing owner for this auth user
   const { data: existingOwner, error: ownerSelectError } = await supabase
     .from('owners')
     .select('*')
@@ -55,11 +85,23 @@ export const createOwnerIfNotExists = async (userId: string, phone: string) => {
     throw ownerSelectError;
   }
 
-  if (existingOwner) {
-    return existingOwner;
+  if (existingOwner) return existingOwner;
+
+  // Also ensure public.users row exists
+  const { error: userInsertError } = await supabase
+    .from('users')
+    .insert({
+      supabase_user_id: userId,
+      phone: phone,
+      role: 'owner',
+      last_login_at: new Date().toISOString(),
+    });
+
+  // Ignore conflict — row may already exist
+  if (userInsertError && !userInsertError.message.includes('duplicate')) {
+    console.warn('users insert warning:', userInsertError.message);
   }
 
-  // Create a minimal owner row; onboarding will fill the rest
   const { data: newOwner, error: insertError } = await supabase
     .from('owners')
     .insert({
