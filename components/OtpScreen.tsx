@@ -1,10 +1,11 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Car, Headphones, ArrowLeft } from 'lucide-react';
+import { supabase, createOwnerIfNotExists } from '../supabaseClient';
+import { toast } from 'react-hot-toast';
 
 interface OtpScreenProps {
-  phoneNumber: string;
-  onVerify: () => void;
+  phoneNumber: string; // 10-digit number from LoginScreen
+  onVerify: (result: { nextScreen: 'IDENTITY' | 'GST' | 'LOCATIONS' | 'DASHBOARD'; owner: any | null }) => void;
   onBack: () => void;
 }
 
@@ -39,16 +40,110 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
     }
   };
 
-  const handleVerify = (e: React.FormEvent) => {
+  const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     const fullOtp = otp.join('');
-    if (fullOtp.length === 6) {
+    if (fullOtp.length !== 6) return;
+
+    const cleanedPhone = phoneNumber.replace(/\D/g, '');
+    const fullPhone = `+91${cleanedPhone}`;
+
+    try {
       setIsLoading(true);
-      console.log('Verified Code:', fullOtp);
-      setTimeout(() => {
-        setIsLoading(false);
-        onVerify();
-      }, 1500);
+
+      // Verify OTP with Supabase
+      const { data, error } = await supabase.auth.verifyOtp({
+        phone: fullPhone,
+        token: fullOtp,
+        type: 'sms',
+      });
+
+      if (error) {
+        console.error('Error verifying OTP:', error);
+        toast.error(error.message || 'Invalid or expired OTP. Please try again.');
+        return;
+      }
+
+      const authUser = data.user;
+      if (!authUser) {
+        toast.error('Could not find authenticated user after OTP verification.');
+        return;
+      }
+
+      // Ensure public.users row exists
+      const { data: existingUser, error: userSelectError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('supabase_user_id', authUser.id)
+        .maybeSingle();
+
+      if (userSelectError) {
+        console.error('Error checking app user:', userSelectError);
+        toast.error('Unable to check user profile. Please try again.');
+        return;
+      }
+
+      if (!existingUser) {
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            supabase_user_id: authUser.id,
+            phone: fullPhone,
+            role: 'owner',
+            last_login_at: new Date().toISOString(),
+          });
+
+        if (insertError) {
+          console.error('Error creating app user:', insertError);
+          toast.error('Unable to create user profile. Please try again.');
+          return;
+        }
+      } else {
+        // Update last_login_at
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({ last_login_at: new Date().toISOString() })
+          .eq('id', existingUser.id);
+
+        if (updateError) {
+          console.warn('Error updating last_login_at:', updateError);
+        }
+      }
+
+      // Ensure owner row exists (or create minimal one)
+      const owner = await createOwnerIfNotExists(authUser.id, fullPhone);
+
+      const completed = !!owner?.onboarding_step && !!owner?.onboarding_completed_at;
+      const onboardingStep: number | null =
+        typeof owner?.onboarding_step === 'number' ? owner.onboarding_step : null;
+
+      let nextScreen: 'IDENTITY' | 'GST' | 'LOCATIONS' | 'DASHBOARD';
+
+      if (owner?.onboarding_completed_at) {
+        // Fully onboarded
+        nextScreen = 'DASHBOARD';
+      } else if (!onboardingStep || onboardingStep <= 1) {
+        // Start from step 1
+        nextScreen = 'IDENTITY';
+      } else if (onboardingStep === 2) {
+        nextScreen = 'GST';
+      } else if (onboardingStep === 3) {
+        nextScreen = 'LOCATIONS';
+      } else {
+        nextScreen = 'DASHBOARD';
+      }
+
+      toast.success('Phone verified successfully');
+
+      onVerify({
+        nextScreen,
+        owner,
+      });
+    } catch (err) {
+      console.error('Unexpected error verifying OTP:', err);
+      toast.error('Something went wrong while verifying OTP.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -95,6 +190,27 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
           <button 
             type="button" 
             className="text-[#6360DF] font-bold text-[13px] mb-8 hover:underline"
+            onClick={async () => {
+              const cleaned = phoneNumber.replace(/\D/g, '');
+              if (cleaned.length !== 10) {
+                toast.error('Enter a valid phone number on previous screen.');
+                return;
+              }
+              try {
+                const { error } = await supabase.auth.signInWithOtp({
+                  phone: `+91${cleaned}`,
+                });
+                if (error) {
+                  console.error('Error resending OTP:', error);
+                  toast.error(error.message || 'Failed to resend OTP.');
+                } else {
+                  toast.success('OTP resent successfully');
+                }
+              } catch (err) {
+                console.error('Unexpected error resending OTP:', err);
+                toast.error('Something went wrong while resending OTP.');
+              }
+            }}
           >
             Resend OTP
           </button>

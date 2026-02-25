@@ -1,6 +1,7 @@
-
 import React, { useState } from 'react';
 import { Car, Headphones } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { toast } from 'react-hot-toast';
 
 interface LoginScreenProps {
   onOtpSent: (phone: string) => void;
@@ -11,14 +12,34 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard 
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (phoneNumber.length >= 10) {
+    if (phoneNumber.length < 10) return;
+
+    const cleaned = phoneNumber.replace(/\D/g, '');
+    const fullPhone = `+91${cleaned}`;
+
+    try {
       setIsLoading(true);
-      setTimeout(() => {
-        setIsLoading(false);
-        onOtpSent(phoneNumber);
-      }, 1000);
+
+      const { error } = await supabase.auth.signInWithOtp({
+        phone: fullPhone,
+      });
+
+      if (error) {
+        console.error('Error sending OTP:', error);
+        toast.error(error.message || 'Failed to send OTP. Please try again.');
+        return;
+      }
+
+      // Proceed to OTP screen with the 10-digit number (UI expectation)
+      onOtpSent(cleaned);
+      toast.success('OTP sent successfully');
+    } catch (err) {
+      console.error('Unexpected error sending OTP:', err);
+      toast.error('Something went wrong while sending OTP.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
