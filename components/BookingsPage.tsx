@@ -1,20 +1,19 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Search, 
   Calendar, 
-  Filter, 
   Plus, 
-  MapPin, 
-  MoreVertical, 
-  ChevronLeft, 
-  ChevronRight 
+  MapPin,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'react-hot-toast';
+import { supabase, getCurrentUser } from '../supabaseClient';
 import CreateNewBooking from './CreateNewBooking';
 import BookingDetails from './BookingDetails';
 
 interface Booking {
+  id: string;
   date: string;
   customer: string;
   initials: string;
@@ -26,77 +25,82 @@ interface Booking {
   balance: string;
   status: 'BOOKED' | 'COMPLETED' | 'ONGOING';
   phone?: string;
+  // raw fields for detail view
+  raw?: any;
 }
 
 const BookingsPage: React.FC = () => {
   const [view, setView] = useState<'list' | 'create' | 'details' | 'confirmed'>('list');
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [bookingData, setBookingData] = useState<Booking[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const bookingData: Booking[] = [
-    {
-      date: "20 Oct 2023",
-      customer: "Arjun Sharma",
-      initials: "AS",
-      bookingPeriod: "22 Oct, 10:00 AM — 25 Oct, 10:00 AM",
-      location: "Mapusa → Old Goa",
-      vehicles: 2,
-      total: "₹8,500",
-      advance: "₹2,000",
-      balance: "₹6,500",
-      status: "BOOKED",
-      phone: "+91 98234 56789"
-    },
-    {
-      date: "19 Oct 2023",
-      customer: "Priya Naik",
-      initials: "PN",
-      bookingPeriod: "21 Oct, 10:00 AM — 23 Oct, 10:00 AM",
-      location: "Calangute → Airport",
-      vehicles: 1,
-      total: "₹4,200",
-      advance: "₹1,000",
-      balance: "₹3,200",
-      status: "COMPLETED"
-    },
-    {
-      date: "19 Oct 2023",
-      customer: "Rohan Mehra",
-      initials: "RM",
-      bookingPeriod: "21 Oct, 11:30 AM — 22 Oct, 09:00 PM",
-      location: "Margao → Vasco",
-      vehicles: 3,
-      total: "₹12,400",
-      advance: "₹3,000",
-      balance: "₹9,400",
-      status: "ONGOING"
-    },
-    {
-      date: "18 Oct 2023",
-      customer: "Sneha Patil",
-      initials: "SP",
-      bookingPeriod: "20 Oct, 09:00 AM — 22 Oct, 06:00 PM",
-      location: "Panjim → Candolim",
-      vehicles: 1,
-      total: "₹3,800",
-      advance: "₹1,000",
-      balance: "₹2,800",
-      status: "BOOKED",
-      phone: "+91 98765 43210"
+  // ── Load bookings from DB ─────────────────────────────────
+  const loadBookings = async () => {
+    setLoading(true);
+    const authUser = await getCurrentUser();
+    if (!authUser) { setLoading(false); return; }
+
+    const { data: ownerRow } = await supabase
+      .from('owners').select('id').eq('user_id', authUser.id).single();
+    if (!ownerRow) { setLoading(false); return; }
+
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('*')
+      .eq('owner_id', ownerRow.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      toast.error('Failed to load bookings.');
+      setLoading(false);
+      return;
     }
-  ];
+
+    const mapped: Booking[] = (data || []).map((b: any) => {
+      const initials = b.customer_name
+        .split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2);
+      const pickupDate = new Date(b.pickup_at);
+      const dropDate = new Date(b.drop_at);
+      const fmt = (d: Date) => d.toLocaleString('en-IN', {
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
+      }).toUpperCase();
+
+      return {
+        id: b.id,
+        date: new Date(b.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        customer: b.customer_name,
+        initials,
+        bookingPeriod: `${fmt(pickupDate)} — ${fmt(dropDate)}`,
+        location: `${b.pickup_location} → ${b.drop_location}`,
+        vehicles: b.no_of_vehicles,
+        total: `₹${Number(b.total_amount).toLocaleString()}`,
+        advance: `₹${Number(b.advance_amount || 0).toLocaleString()}`,
+        balance: `₹${Number(b.balance_amount || 0).toLocaleString()}`,
+        status: b.status as Booking['status'],
+        phone: b.customer_phone,
+        raw: b,
+      };
+    });
+
+    setBookingData(mapped);
+    setLoading(false);
+  };
+  // ─────────────────────────────────────────────────────────
+
+  useEffect(() => { loadBookings(); }, []);
 
   const getStatusStyle = (status: Booking['status']) => {
     switch (status) {
-      case 'BOOKED': return 'bg-[#EEEDFA] text-[#6360DF]';
+      case 'BOOKED':    return 'bg-[#EEEDFA] text-[#6360DF]';
       case 'COMPLETED': return 'bg-[#D1FAE5] text-[#059669]';
-      case 'ONGOING': return 'bg-[#FEF3C7] text-[#D97706]';
-      default: return 'bg-gray-100 text-gray-600';
+      case 'ONGOING':   return 'bg-[#FEF3C7] text-[#D97706]';
+      default:          return 'bg-gray-100 text-gray-600';
     }
   };
 
   const handleConfirmBooking = (data: any) => {
-    // Map data from CreateNewBooking to the shape expected by BookingDetails
     const mappedBooking = {
       ...data,
       customer: data.customer.fullName,
@@ -108,12 +112,18 @@ const BookingsPage: React.FC = () => {
     };
     setSelectedBooking(mappedBooking);
     setView('confirmed');
+    // Reload list so new booking appears
+    loadBookings();
   };
 
   const handleRowClick = (booking: Booking) => {
-    setSelectedBooking(booking);
+    setSelectedBooking(booking.raw || booking);
     setView('details');
   };
+
+  const filtered = bookingData.filter(b =>
+    b.customer.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="min-h-full">
@@ -138,13 +148,15 @@ const BookingsPage: React.FC = () => {
                   <input 
                     type="text" 
                     placeholder="Search customer..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
                     className="w-full bg-white border border-[#d1d0eb] rounded-full py-2.5 pl-11 pr-4 text-sm font-medium outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] transition-all"
                   />
                 </div>
 
                 <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
                   <Calendar size={16} className="text-[#6c7e96]" />
-                  <span>Oct 2023</span>
+                  <span>{new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}</span>
                 </div>
 
                 <button 
@@ -172,47 +184,64 @@ const BookingsPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#d1d0eb]/20">
-                    {bookingData.map((booking, idx) => (
-                      <tr 
-                        key={idx} 
-                        onClick={() => handleRowClick(booking)}
-                        className="group hover:bg-[#F8F9FA] transition-colors cursor-pointer"
-                      >
-                        <td className="py-5 pl-10 text-sm font-medium text-[#151a3c] whitespace-nowrap">
-                          {booking.date}
-                        </td>
-                        <td className="py-5 px-6 whitespace-nowrap">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 rounded-full bg-[#EEEDFA] flex items-center justify-center text-[#6360DF] text-[11px] font-extrabold">
-                              {booking.initials}
-                            </div>
-                            <span className="font-bold text-[#151a3c] text-sm group-hover:text-[#6360DF] transition-colors">{booking.customer}</span>
+                    {loading ? (
+                      <tr>
+                        <td colSpan={7} className="py-16 text-center">
+                          <div className="flex items-center justify-center text-[#6c7e96]">
+                            <Loader2 size={22} className="animate-spin mr-2" />
+                            <span className="text-sm font-medium">Loading bookings...</span>
                           </div>
-                        </td>
-                        <td className="py-5 px-6 text-sm font-medium text-[#151a3c] whitespace-nowrap">
-                          {booking.bookingPeriod}
-                        </td>
-                        <td className="py-5 px-6 whitespace-nowrap">
-                          <div className="flex items-center space-x-2 text-[#6c7e96] text-sm font-medium">
-                            <MapPin size={14} className="text-[#6360DF]" />
-                            <span>{booking.location}</span>
-                          </div>
-                        </td>
-                        <td className="py-5 px-6 text-center">
-                          <span className="inline-block bg-[#f1f5f9] px-2.5 py-1 rounded-md text-sm font-bold text-[#151a3c]">
-                            {booking.vehicles}
-                          </span>
-                        </td>
-                        <td className="py-5 px-6 text-sm font-extrabold text-[#151a3c]">
-                          {booking.total}
-                        </td>
-                        <td className="py-5 px-6">
-                          <span className={`px-4 py-1.5 rounded-full text-[10px] font-extrabold tracking-widest ${getStatusStyle(booking.status)}`}>
-                            {booking.status}
-                          </span>
                         </td>
                       </tr>
-                    ))}
+                    ) : filtered.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-16 text-center text-[#6c7e96] text-sm font-medium">
+                          {bookingData.length === 0 ? 'No bookings yet. Click "New Booking" to get started.' : 'No bookings match your search.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      filtered.map((booking) => (
+                        <tr 
+                          key={booking.id}
+                          onClick={() => handleRowClick(booking)}
+                          className="group hover:bg-[#F8F9FA] transition-colors cursor-pointer"
+                        >
+                          <td className="py-5 pl-10 text-sm font-medium text-[#151a3c] whitespace-nowrap">
+                            {booking.date}
+                          </td>
+                          <td className="py-5 px-6 whitespace-nowrap">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-[#EEEDFA] flex items-center justify-center text-[#6360DF] text-[11px] font-extrabold">
+                                {booking.initials}
+                              </div>
+                              <span className="font-bold text-[#151a3c] text-sm group-hover:text-[#6360DF] transition-colors">{booking.customer}</span>
+                            </div>
+                          </td>
+                          <td className="py-5 px-6 text-sm font-medium text-[#151a3c] whitespace-nowrap">
+                            {booking.bookingPeriod}
+                          </td>
+                          <td className="py-5 px-6 whitespace-nowrap">
+                            <div className="flex items-center space-x-2 text-[#6c7e96] text-sm font-medium">
+                              <MapPin size={14} className="text-[#6360DF]" />
+                              <span>{booking.location}</span>
+                            </div>
+                          </td>
+                          <td className="py-5 px-6 text-center">
+                            <span className="inline-block bg-[#f1f5f9] px-2.5 py-1 rounded-md text-sm font-bold text-[#151a3c]">
+                              {booking.vehicles}
+                            </span>
+                          </td>
+                          <td className="py-5 px-6 text-sm font-extrabold text-[#151a3c]">
+                            {booking.total}
+                          </td>
+                          <td className="py-5 px-6">
+                            <span className={`px-4 py-1.5 rounded-full text-[10px] font-extrabold tracking-widest ${getStatusStyle(booking.status)}`}>
+                              {booking.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

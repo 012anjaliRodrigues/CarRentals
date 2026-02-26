@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { 
   ArrowLeft, 
@@ -6,9 +5,10 @@ import {
   Phone, 
   CreditCard, 
   CheckCircle2,
-  X
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { toast } from 'react-hot-toast';
+import { supabase, getCurrentUser } from '../supabaseClient';
 
 interface AddDriverProps {
   onSave: (driver: { name: string; phone: string; licenseNo: string }) => void;
@@ -19,12 +19,49 @@ const AddDriver: React.FC<AddDriverProps> = ({ onSave, onCancel }) => {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [licenseNo, setLicenseNo] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSave = () => {
-    if (name && phone && licenseNo) {
+  // ── Supabase save ─────────────────────────────────────────────
+  const handleSave = async () => {
+    if (!name || !phone || !licenseNo) return;
+    setIsSaving(true);
+
+    try {
+      const authUser = await getCurrentUser();
+      if (!authUser) { toast.error('No session found. Please log in again.'); return; }
+
+      const { data: ownerRow, error: ownerErr } = await supabase
+        .from('owners')
+        .select('id')
+        .eq('user_id', authUser.id)
+        .single();
+
+      if (ownerErr || !ownerRow) { toast.error('Owner profile not found.'); return; }
+
+      const { error } = await supabase
+        .from('drivers')
+        .insert({
+          owner_id: ownerRow.id,
+          full_name: name.trim(),
+          phone: `+91 ${phone.trim()}`,
+          license_no: licenseNo.trim(),
+          current_location: 'Not Assigned',
+          status: 'active',
+        });
+
+      if (error) { toast.error('Failed to save driver: ' + error.message); return; }
+
+      toast.success('Driver saved successfully!');
       onSave({ name, phone, licenseNo });
+
+    } catch (err) {
+      console.error('Unexpected error saving driver:', err);
+      toast.error('Something went wrong. Please try again.');
+    } finally {
+      setIsSaving(false);
     }
   };
+  // ─────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-full">
@@ -55,11 +92,15 @@ const AddDriver: React.FC<AddDriverProps> = ({ onSave, onCancel }) => {
             </button>
             <button 
               onClick={handleSave}
-              disabled={!name || !phone || !licenseNo}
-              className={`bg-[#6360DF] hover:bg-[#5451d0] text-white px-8 py-3 rounded-xl text-sm font-bold shadow-lg shadow-[#6360df33] transition-all flex items-center space-x-2 ${(!name || !phone || !licenseNo) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!name || !phone || !licenseNo || isSaving}
+              className={`bg-[#6360DF] hover:bg-[#5451d0] text-white px-8 py-3 rounded-xl text-sm font-bold shadow-lg shadow-[#6360df33] transition-all flex items-center space-x-2 ${(!name || !phone || !licenseNo || isSaving) ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <CheckCircle2 size={18} />
-              <span>Save Driver</span>
+              {isSaving ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <CheckCircle2 size={18} />
+              )}
+              <span>{isSaving ? 'Saving...' : 'Save Driver'}</span>
             </button>
           </div>
         </div>
@@ -118,7 +159,6 @@ const AddDriver: React.FC<AddDriverProps> = ({ onSave, onCancel }) => {
               </div>
             </div>
           </div>
-
         </div>
       </motion.div>
     </div>

@@ -1,5 +1,4 @@
-
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ArrowLeft, 
   User, 
@@ -10,22 +9,26 @@ import {
   Plus, 
   Minus, 
   CheckCircle,
-  Tag,
   ChevronDown,
   Percent,
   CircleDollarSign,
   AlertCircle,
-  Ban
+  Ban,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'react-hot-toast';
+import { supabase, getCurrentUser } from '../supabaseClient';
 
 interface SelectedVehicle {
-  id: string;
+  id: string;        // model_id
+  vehicleId: string; // actual vehicle id (first available)
   name: string;
   transmission: string;
   fuel: string;
   rate: number;
   quantity: number;
+  availableCount: number;
 }
 
 interface CreateNewBookingProps {
@@ -34,61 +37,102 @@ interface CreateNewBookingProps {
 }
 
 const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }) => {
-  // Helper to format ISO to display string
   const formatDateDisplay = (iso: string) => {
     if (!iso) return '';
     const date = new Date(iso);
     return date.toLocaleString('en-IN', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: true
     }).replace(/\//g, '-').toUpperCase();
   };
 
   const [customerData, setCustomerData] = useState({
-    fullName: 'Arjun Sharma',
-    phone: '98234 56789',
+    fullName: '',
+    phone: '',
     pickupLocation: 'Mapusa',
     dropLocation: 'Old Goa',
-    pickupDateTime: '2023-11-20T10:00',
-    returnDateTime: '2023-11-22T10:00'
+    pickupDateTime: '',
+    returnDateTime: ''
   });
 
   const [selectedVehicles, setSelectedVehicles] = useState<SelectedVehicle[]>([]);
   const [securityDeposit, setSecurityDeposit] = useState(true);
-  
-  // Discount States
   const [discountEnabled, setDiscountEnabled] = useState(false);
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [discountValue, setDiscountValue] = useState<string>('0');
+  const [filters, setFilters] = useState({ transmission: 'All', fuel: 'All', type: 'All' });
 
-  // Fleet Filters
-  const [filters, setFilters] = useState({
-    transmission: 'All',
-    fuel: 'All',
-    type: 'All'
-  });
+  // ── Fleet from DB ─────────────────────────────────────────
+  const [fleetData, setFleetData] = useState<Record<string, any[]>>({});
+  const [fleetLoading, setFleetLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
 
-  const fleetData: Record<string, any[]> = {
-    'PREMIUM HATCHBACK': [
-      { id: '1', name: 'Maruti Suzuki Swift', trans: 'Manual', fuel: 'Petrol', available: '5/5', rate: 1200 },
-      { id: '2', name: 'Maruti Suzuki Baleno', trans: 'Automatic', fuel: 'Petrol', available: '4/4', rate: 1700 },
-      { id: '3', name: 'Hyundai i20', trans: 'Automatic', fuel: 'Petrol', available: '2/5', rate: 1800 },
-    ],
-    'ENTRY-LEVEL HATCHBACK': [
-      { id: '4', name: 'Maruti Suzuki Wagon R', trans: 'Manual', fuel: 'Petrol', available: '8/8', rate: 1000 },
-      { id: '5', name: 'Tata Tiago', trans: 'Manual', fuel: 'Petrol', available: '4/5', rate: 1100 },
-      { id: '6', name: 'Maruti Suzuki Celerio', trans: 'Automatic', fuel: 'Petrol', available: '3/3', rate: 1200 },
-    ],
-    'COMPACT SUV': [
-      { id: '7', name: 'Maruti Suzuki Brezza', trans: 'Manual', fuel: 'Petrol', available: '3/3', rate: 2500 },
-      { id: '8', name: 'Hyundai Venue', trans: 'Automatic', fuel: 'Petrol', available: '2/2', rate: 2800 },
-      { id: '9', name: 'Kia Sonet', trans: 'Automatic', fuel: 'Petrol', available: '2/2', rate: 3300 },
-    ]
+  const loadFleet = async () => {
+    setFleetLoading(true);
+    const authUser = await getCurrentUser();
+    if (!authUser) { setFleetLoading(false); return; }
+
+    const { data: ownerRow } = await supabase
+      .from('owners').select('id').eq('user_id', authUser.id).single();
+    if (!ownerRow) { setFleetLoading(false); return; }
+
+    setOwnerId(ownerRow.id);
+
+    const { data, error } = await supabase
+      .from('vehicles')
+      .select('id, status, transmission, fuel_type, models(id, brand, name, default_transmission, default_fuel_type, categories(name))')
+      .eq('owner_id', ownerRow.id)
+      .eq('status', 'available');
+
+    if (error) {
+      toast.error('Failed to load fleet.');
+      setFleetLoading(false);
+      return;
+    }
+
+    // Group by model_id → category
+    const modelMap: Record<string, any> = {};
+    (data || []).forEach((v: any) => {
+      const model = v.models;
+      if (!model) return;
+      if (!modelMap[model.id]) {
+        modelMap[model.id] = {
+          id: model.id,
+          name: `${model.brand} ${model.name}`,
+          trans: v.transmission || model.default_transmission,
+          fuel: v.fuel_type || model.default_fuel_type,
+          category: model.categories?.name?.toUpperCase() || 'OTHERS',
+          rate: 1500, // default rate — replace with your pricing logic
+          vehicles: [],
+        };
+      }
+      modelMap[model.id].vehicles.push(v.id);
+    });
+
+    // Group by category
+    const grouped: Record<string, any[]> = {};
+    Object.values(modelMap).forEach((m: any) => {
+      const cat = m.category;
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push({
+        id: m.id,
+        name: m.name,
+        trans: m.trans,
+        fuel: m.fuel,
+        available: `${m.vehicles.length}/${m.vehicles.length}`,
+        availableCount: m.vehicles.length,
+        vehicleIds: m.vehicles,
+        rate: m.rate,
+      });
+    });
+
+    setFleetData(grouped);
+    setFleetLoading(false);
   };
+
+  useEffect(() => { loadFleet(); }, []);
+  // ─────────────────────────────────────────────────────────
 
   const filteredFleet = useMemo(() => {
     const result: Record<string, any[]> = {};
@@ -96,25 +140,35 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       const filtered = vehicles.filter(v => {
         const transMatch = filters.transmission === 'All' || v.trans === filters.transmission;
         const fuelMatch = filters.fuel === 'All' || v.fuel === filters.fuel;
-        // In this demo UI, the category names act as the "Type" check
         const typeMatch = filters.type === 'All' || category.includes(filters.type.toUpperCase());
         return transMatch && fuelMatch && typeMatch;
       });
-      if (filtered.length > 0) {
-        result[category] = filtered;
-      }
+      if (filtered.length > 0) result[category] = filtered;
     });
     return result;
-  }, [filters]);
+  }, [filters, fleetData]);
 
   const handleVehicleAction = (v: any, action: 'add' | 'inc' | 'dec') => {
     setSelectedVehicles(prev => {
       const existing = prev.find(item => item.id === v.id);
       if (action === 'add') {
-        return [...prev, { id: v.id, name: v.name, transmission: v.trans, fuel: v.fuel, rate: v.rate, quantity: 1 }];
+        return [...prev, {
+          id: v.id,
+          vehicleId: v.vehicleIds[0],
+          name: v.name,
+          transmission: v.trans,
+          fuel: v.fuel,
+          rate: v.rate,
+          quantity: 1,
+          availableCount: v.availableCount,
+        }];
       }
       if (action === 'inc') {
-        return prev.map(item => item.id === v.id ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item =>
+          item.id === v.id && item.quantity < item.availableCount
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
       }
       if (action === 'dec') {
         const updated = prev.map(item => item.id === v.id ? { ...item, quantity: item.quantity - 1 } : item);
@@ -124,21 +178,18 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     });
   };
 
-  const totalSelectedCount = useMemo(() => {
-    return selectedVehicles.reduce((acc, curr) => acc + curr.quantity, 0);
-  }, [selectedVehicles]);
+  const totalSelectedCount = useMemo(() =>
+    selectedVehicles.reduce((acc, curr) => acc + curr.quantity, 0), [selectedVehicles]);
 
-  const isConfirmEnabled = totalSelectedCount > 0;
+  const isConfirmEnabled = totalSelectedCount > 0 && customerData.fullName && customerData.phone && customerData.pickupDateTime && customerData.returnDateTime;
 
   const calculations = useMemo(() => {
     const subtotal = selectedVehicles.reduce((acc, curr) => acc + (curr.rate * curr.quantity), 0);
     const surcharge = selectedVehicles.length > 0 ? 300 : 0;
     const deposit = securityDeposit ? 2000 : 0;
-    
     const val = parseFloat(discountValue) || 0;
     let discountAmount = 0;
     let error = '';
-
     if (discountEnabled) {
       if (discountType === 'percentage') {
         if (val > 100) error = 'Discount cannot exceed 100%';
@@ -148,14 +199,90 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         discountAmount = Math.min(val, subtotal);
       }
     }
-
-    // GST calculated on (Subtotal + Surcharges - Discount)
     const taxableAmount = Math.max(0, subtotal + surcharge - discountAmount);
     const gst = taxableAmount * 0.18;
     const total = taxableAmount + deposit + gst;
-
     return { subtotal, surcharge, deposit, gst, total, discountAmount, error };
   }, [selectedVehicles, securityDeposit, discountType, discountValue, discountEnabled]);
+
+  // ── Save booking to DB ────────────────────────────────────
+  const handleConfirm = async () => {
+    if (!isConfirmEnabled || !ownerId) return;
+    setIsSaving(true);
+
+    try {
+      // Generate reference
+      const ref = `BK-${Date.now().toString().slice(-8)}`;
+
+      const { data: bookingRow, error: bookingErr } = await supabase
+        .from('bookings')
+        .insert({
+          owner_id: ownerId,
+          booking_reference: ref,
+          customer_name: customerData.fullName.trim(),
+          customer_phone: `+91 ${customerData.phone.trim()}`,
+          customer_email: null,
+          pickup_location: customerData.pickupLocation,
+          drop_location: customerData.dropLocation,
+          pickup_at: new Date(customerData.pickupDateTime).toISOString(),
+          drop_at: new Date(customerData.returnDateTime).toISOString(),
+          status: 'BOOKED',
+          no_of_vehicles: totalSelectedCount,
+          subtotal: calculations.subtotal,
+          surcharge: calculations.surcharge,
+          security_deposit: calculations.deposit,
+          discount_type: discountEnabled ? discountType : null,
+          discount_value: discountEnabled ? parseFloat(discountValue) : 0,
+          discount_amount: calculations.discountAmount,
+          gst_amount: Math.round(calculations.gst),
+          total_amount: Math.round(calculations.total),
+          advance_amount: 0,
+          balance_amount: Math.round(calculations.total),
+          payment_status: 'UNPAID',
+        })
+        .select('id')
+        .single();
+
+      if (bookingErr || !bookingRow) {
+        toast.error('Failed to save booking: ' + bookingErr?.message);
+        return;
+      }
+
+      // Insert booking_details rows (one per selected model)
+      const detailRows = selectedVehicles.map(v => ({
+        owner_id: ownerId,
+        booking_id: bookingRow.id,
+        vehicle_id: v.vehicleId,
+        model_id: v.id,
+        quantity: v.quantity,
+        daily_rate: v.rate,
+        line_subtotal: v.rate * v.quantity,
+        discount_amount: 0,
+        tax_amount: 0,
+        total_amount: v.rate * v.quantity,
+      }));
+
+      const { error: detailErr } = await supabase.from('booking_details').insert(detailRows);
+      if (detailErr) {
+        toast.error('Booking saved but details failed: ' + detailErr.message);
+      }
+
+      toast.success('Booking confirmed!');
+      onConfirm({
+        customer: customerData,
+        vehicles: selectedVehicles,
+        pricing: calculations,
+        referenceId: ref,
+      });
+
+    } catch (err) {
+      console.error('Unexpected error saving booking:', err);
+      toast.error('Something went wrong. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  // ─────────────────────────────────────────────────────────
 
   return (
     <div className="max-w-7xl mx-auto pb-20">
@@ -171,7 +298,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8 items-start">
-        {/* Left Column: Form Sections */}
+        {/* Left Column */}
         <div className="flex-1 space-y-8 w-full">
           {/* Customer & Trip Details */}
           <section className="bg-white rounded-[2rem] shadow-sm border border-[#d1d0eb]/30 p-8 md:p-10">
@@ -250,6 +377,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                     <option>Old Goa</option>
                     <option>Vagator</option>
                     <option>Airport</option>
+                    <option>Margao</option>
                   </select>
                   <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" size={18} />
                 </div>
@@ -337,7 +465,24 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.keys(filteredFleet).length > 0 ? (
+                  {fleetLoading ? (
+                    <tr>
+                      <td colSpan={6} className="py-16 text-center">
+                        <div className="flex items-center justify-center text-[#6c7e96]">
+                          <Loader2 size={20} className="animate-spin mr-2" />
+                          <span className="text-sm font-medium">Loading fleet...</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : Object.keys(filteredFleet).length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-20 text-center text-[#6c7e96] font-medium text-sm">
+                        {Object.keys(fleetData).length === 0
+                          ? 'No available vehicles. Add vehicles in Fleet Listing first.'
+                          : 'No vehicles matching these filters. Try adjusting your search.'}
+                      </td>
+                    </tr>
+                  ) : (
                     Object.entries(filteredFleet).map(([category, vehicles]) => (
                       <React.Fragment key={category}>
                         <tr className="bg-[#EEEDFA]/50">
@@ -351,7 +496,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                               <td className="py-4 text-[#6c7e96] text-xs font-semibold">{v.trans}</td>
                               <td className="py-4 text-[#6c7e96] text-xs font-semibold">{v.fuel}</td>
                               <td className="py-4 text-center">
-                                <span className={`text-xs font-extrabold ${v.available.startsWith('2/') || v.available.startsWith('1/') ? 'text-[#F59E0B]' : 'text-[#10B981]'}`}>
+                                <span className={`text-xs font-extrabold ${v.availableCount <= 2 ? 'text-[#F59E0B]' : 'text-[#10B981]'}`}>
                                   {v.available}
                                 </span>
                               </td>
@@ -377,12 +522,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                         })}
                       </React.Fragment>
                     ))
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="py-20 text-center text-[#6c7e96] font-medium text-sm">
-                        No vehicles matching these filters. Try adjusting your search.
-                      </td>
-                    </tr>
                   )}
                 </tbody>
               </table>
@@ -406,8 +545,8 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                     <User size={18} />
                   </div>
                   <div>
-                    <h4 className="font-extrabold text-[#151a3c] text-sm">{customerData.fullName}</h4>
-                    <p className="text-xs font-semibold text-[#6c7e96]">{customerData.phone}</p>
+                    <h4 className="font-extrabold text-[#151a3c] text-sm">{customerData.fullName || '—'}</h4>
+                    <p className="text-xs font-semibold text-[#6c7e96]">{customerData.phone || '—'}</p>
                   </div>
                 </div>
               </div>
@@ -489,13 +628,10 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
                 <div className="h-px bg-[#d1d0eb]/30 !my-6" />
 
-                {/* Discount Feature Section */}
+                {/* Discount */}
                 <div className="space-y-4">
                   <div className="flex items-center justify-between text-[#151a3c]">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-sm font-extrabold">Discount</span>
-                    </div>
-                    {/* Toggle Switch */}
+                    <span className="text-sm font-extrabold">Discount</span>
                     <button 
                       onClick={() => setDiscountEnabled(!discountEnabled)}
                       className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${discountEnabled ? 'bg-[#6360DF]' : 'bg-[#E5E7EB]'}`}
@@ -532,7 +668,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#151a3c] pointer-events-none" />
                             </div>
                           </div>
-
                           <div className="space-y-2">
                             <label className="text-[10px] font-bold text-[#6c7e96] uppercase tracking-wider">Discount Value</label>
                             <div className="relative">
@@ -557,7 +692,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                               </div>
                             )}
                           </div>
-
                           <div className="flex justify-between items-center pt-2 border-t border-[#d1d0eb]/50">
                             <span className="text-xs font-semibold text-[#6c7e96]">Discount Amount</span>
                             <span className="text-sm font-extrabold text-[#10B981]">
@@ -580,21 +714,27 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
               <div className="space-y-3 pt-4">
                 <button 
-                  disabled={!isConfirmEnabled}
-                  onClick={() => onConfirm({ customer: customerData, vehicles: selectedVehicles, pricing: calculations })}
+                  disabled={!isConfirmEnabled || isSaving}
+                  onClick={handleConfirm}
                   className={`w-full font-bold py-4 rounded-xl flex items-center justify-center space-x-2 transition-all shadow-md ${
-                    isConfirmEnabled 
+                    isConfirmEnabled && !isSaving
                       ? 'bg-[#6360DF] hover:bg-[#4c47dd] text-white active:scale-95 cursor-pointer shadow-[#6360df33]' 
                       : 'bg-[#E5E7EB] text-[#9CA3AF] cursor-not-allowed opacity-60'
                   }`}
                 >
-                  {isConfirmEnabled ? <CheckCircle size={20} /> : <Ban size={20} />}
-                  <span>Confirm Booking</span>
+                  {isSaving ? (
+                    <Loader2 size={20} className="animate-spin" />
+                  ) : isConfirmEnabled ? (
+                    <CheckCircle size={20} />
+                  ) : (
+                    <Ban size={20} />
+                  )}
+                  <span>{isSaving ? 'Saving...' : 'Confirm Booking'}</span>
                 </button>
                 
-                {!isConfirmEnabled && (
+                {!isConfirmEnabled && !isSaving && (
                   <p className="text-[12px] font-medium text-[#6c7e96] text-center mt-2 animate-pulse">
-                    Please select at least 1 vehicle to confirm booking
+                    Fill in customer details and select at least 1 vehicle
                   </p>
                 )}
 

@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   Car as CarIcon, 
@@ -16,8 +15,6 @@ import {
   Plus,
   Calendar,
   Grid3X3,
-  List,
-  FileText,
   LogOut,
   User,
   Mail,
@@ -30,6 +27,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { UserProfile } from '../types';
+import { supabase, getCurrentUser } from '../supabaseClient';
 import FleetListing from './FleetListing';
 import BookingsPage from './BookingsPage';
 import DriversPage from './DriversPage';
@@ -39,7 +37,6 @@ import RemindersPage from './RemindersPage';
 const StatCard: React.FC<{ 
   title: string; 
   value: string; 
-  // Changed from React.ReactNode to React.ReactElement to support cloning
   icon: React.ReactElement; 
   color: string; 
   trend: string; 
@@ -63,14 +60,12 @@ const StatCard: React.FC<{
       </div>
     </div>
     <div className={`p-4 rounded-2xl ${color} text-white shadow-lg group-hover:scale-110 transition-transform flex items-center justify-center`}>
-      {/* Added <any> cast to cloneElement to allow the 'size' prop */}
       {React.cloneElement(icon as React.ReactElement<any>, { size: 22 })}
     </div>
   </motion.div>
 );
 
 const SidebarItem: React.FC<{ 
-  // Changed from React.ReactNode to React.ReactElement to support cloning
   icon: React.ReactElement; 
   label: string; 
   active?: boolean; 
@@ -85,38 +80,54 @@ const SidebarItem: React.FC<{
     }`}
   >
     <div className={`${active ? 'text-white' : 'text-[#6c7e96] group-hover:text-[#151a3c]'}`}>
-      {/* Added <any> cast to cloneElement to allow the 'size' prop */}
       {React.cloneElement(icon as React.ReactElement<any>, { size: 20 })}
     </div>
     <span className={`font-semibold text-[15px] ${active ? 'text-white' : 'text-inherit'}`}>{label}</span>
   </button>
 );
 
+// ── Types ──────────────────────────────────────────────────────
+interface DashboardStats {
+  totalVehicles: number;
+  availableVehicles: number;
+  activeBookings: number;
+  totalDrivers: number;
+}
+
+interface FleetCar {
+  id: string;
+  name: string;
+  plate: string;
+  status: string;
+  statusColor: string;
+}
+// ──────────────────────────────────────────────────────────────
+
 const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }> = ({ onLogout, initialProfile }) => {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  
-  // Profile State
-  const [profile, setProfile] = useState(initialProfile);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
+  // Profile state
+  const [profile, setProfile] = useState(initialProfile);
   const [editProfile, setEditProfile] = useState({ ...profile });
   const [isEditing, setIsEditing] = useState(false);
+
+  // ── Dashboard data state ──────────────────────────────────
+  const [stats, setStats] = useState<DashboardStats>({
+    totalVehicles: 0,
+    availableVehicles: 0,
+    activeBookings: 0,
+    totalDrivers: 0,
+  });
+  const [fleetCars, setFleetCars] = useState<FleetCar[]>([]);
+  const [statsLoading, setStatsLoading] = useState(true);
+  // ─────────────────────────────────────────────────────────
 
   const goaLocations = [
     'Panjim', 'Mapusa', 'Miramar', 'Calangute', 'Candolim', 
     'Baga', 'Airport (Dabolim)', 'Mopa Airport', 'Margao', 'Vasco'
-  ];
-
-  const handleSaveProfile = () => {
-    setProfile({ ...editProfile });
-    setIsEditing(false);
-  };
-
-  const cars = [
-    { id: '1', name: 'Tesla Model 3', plate: 'GZ-2024-01', status: 'Available', statusColor: 'bg-green-100 text-green-700', earnings: '$1,200' },
-    { id: '2', name: 'BMW M4 Competition', plate: 'GZ-2024-05', status: 'In Use', statusColor: 'bg-blue-100 text-blue-700', earnings: '$1,200' },
-    { id: '3', name: 'Range Rover Sport', plate: 'GZ-2024-08', status: 'Maintenance', statusColor: 'bg-orange-100 text-orange-700', earnings: '$1,200' },
   ];
 
   const sidebarItems = [
@@ -130,9 +141,114 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
   ];
 
   const handleNewBooking = () => {
-    console.log('New Booking Clicked');
     setActiveTab('Bookings');
   };
+
+  // ── Load dashboard stats + fleet preview ─────────────────
+  const loadDashboardData = async () => {
+    setStatsLoading(true);
+    const authUser = await getCurrentUser();
+    if (!authUser) { setStatsLoading(false); return; }
+
+    const { data: ownerRow } = await supabase
+      .from('owners').select('id').eq('user_id', authUser.id).single();
+    if (!ownerRow) { setStatsLoading(false); return; }
+
+    const ownerId = ownerRow.id;
+
+    // Run all queries in parallel
+    const [vehiclesRes, bookingsRes, driversRes] = await Promise.all([
+      supabase
+        .from('vehicles')
+        .select('id, status, registration_no, models(brand, name)')
+        .eq('owner_id', ownerId),
+      supabase
+        .from('bookings')
+        .select('id', { count: 'exact' })
+        .eq('owner_id', ownerId)
+        .in('status', ['confirmed', 'ongoing']),
+      supabase
+        .from('drivers')
+        .select('id', { count: 'exact' })
+        .eq('owner_id', ownerId),
+    ]);
+
+    const vehicles = (vehiclesRes.data as any[]) || [];
+    const totalVehicles = vehicles.length;
+    const availableVehicles = vehicles.filter((v: any) => v.status === 'available').length;
+    const activeBookings = bookingsRes.count ?? 0;
+    const totalDrivers = driversRes.count ?? 0;
+
+    setStats({ totalVehicles, availableVehicles, activeBookings, totalDrivers });
+
+    // Fleet preview — first 5 vehicles
+    const getStatusColor = (s: string) => {
+      if (s === 'available')   return 'bg-green-100 text-green-700';
+      if (s === 'rented')      return 'bg-blue-100 text-blue-700';
+      if (s === 'maintenance') return 'bg-orange-100 text-orange-700';
+      return 'bg-gray-100 text-gray-600';
+    };
+    const getStatusLabel = (s: string) => {
+      if (s === 'available')   return 'Available';
+      if (s === 'rented')      return 'In Use';
+      if (s === 'maintenance') return 'Maintenance';
+      return s;
+    };
+
+    const preview: FleetCar[] = vehicles.slice(0, 5).map((v: any) => ({
+      id: v.id,
+      name: v.models ? `${v.models.brand} ${v.models.name}` : 'Unknown Model',
+      plate: v.registration_no,
+      status: getStatusLabel(v.status),
+      statusColor: getStatusColor(v.status),
+    }));
+
+    setFleetCars(preview);
+    setStatsLoading(false);
+  };
+  // ─────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (activeTab === 'Dashboard') loadDashboardData();
+  }, [activeTab]);
+
+  // ── Save profile to DB ────────────────────────────────────
+  const handleSaveProfile = async () => {
+    setIsSavingProfile(true);
+    try {
+      const authUser = await getCurrentUser();
+      if (!authUser) { toast.error('No session found.'); return; }
+
+      const { error } = await supabase
+        .from('owners')
+        .update({
+          full_name: editProfile.fullName,
+          business_name: editProfile.businessName,
+          email: editProfile.email,
+          business_address: editProfile.businessAddress,
+          is_gst_enabled: editProfile.isGstEnabled,
+          gst_type: editProfile.gstType || null,
+          gst_number: editProfile.gstNumber || null,
+          service_locations: editProfile.locations,
+        })
+        .eq('user_id', authUser.id);
+
+      if (error) {
+        toast.error('Failed to save profile: ' + error.message);
+        return;
+      }
+
+      setProfile({ ...editProfile });
+      setIsEditing(false);
+      toast.success('Profile saved successfully!');
+    } catch (err) {
+      console.error('Unexpected error saving profile:', err);
+      toast.error('Something went wrong.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+  // ─────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-screen bg-[#FFFFFF] overflow-hidden">
@@ -155,16 +271,13 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Close button for mobile */}
         <button 
           onClick={() => setIsSidebarOpen(false)}
           className="lg:hidden absolute top-6 right-6 p-2 text-[#6c7e96]"
         >
-          {/* Fixed typo: changed size(20) to size={20} to fix TypeScript error about boolean assignment */}
           <X size={20} />
         </button>
 
-        {/* Logo Section */}
         <div className="flex items-center space-x-3 mb-10 px-1 pt-2">
           <div className="w-10 h-10 bg-[#6360DF] rounded-xl flex items-center justify-center shadow-md">
             <CarIcon className="text-white w-6 h-6" />
@@ -172,7 +285,6 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
           <span className="text-[20px] font-bold text-[#151a3c] tracking-tight">GaadiZai</span>
         </div>
 
-        {/* Navigation Menu */}
         <nav className="flex-1 space-y-2 px-1">
           {sidebarItems.map((item) => (
             <SidebarItem
@@ -188,7 +300,6 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
           ))}
         </nav>
 
-        {/* New Booking Button at bottom */}
         <div className="mt-auto px-1 space-y-2 pb-4">
           <button 
             onClick={handleNewBooking}
@@ -307,9 +418,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                         <User size={12} className="mr-1.5" /> Full Name
                       </label>
                       {isEditing ? (
-                        <input 
-                          type="text"
-                          value={editProfile.fullName}
+                        <input type="text" value={editProfile.fullName}
                           onChange={(e) => setEditProfile({...editProfile, fullName: e.target.value})}
                           className="w-full bg-[#f8f7ff] border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-bold text-[#151a3c] outline-none focus:border-[#6360DF] transition-all"
                         />
@@ -324,9 +433,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                         <Briefcase size={12} className="mr-1.5" /> Business Name
                       </label>
                       {isEditing ? (
-                        <input 
-                          type="text"
-                          value={editProfile.businessName}
+                        <input type="text" value={editProfile.businessName}
                           onChange={(e) => setEditProfile({...editProfile, businessName: e.target.value})}
                           className="w-full bg-[#f8f7ff] border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-bold text-[#151a3c] outline-none focus:border-[#6360DF] transition-all"
                         />
@@ -341,9 +448,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                         <Phone size={12} className="mr-1.5" /> Phone Number
                       </label>
                       {isEditing ? (
-                        <input 
-                          type="text"
-                          value={editProfile.phone}
+                        <input type="text" value={editProfile.phone}
                           onChange={(e) => setEditProfile({...editProfile, phone: e.target.value})}
                           className="w-full bg-[#f8f7ff] border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-bold text-[#151a3c] outline-none focus:border-[#6360DF] transition-all"
                         />
@@ -358,9 +463,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                         <Mail size={12} className="mr-1.5" /> Email Address
                       </label>
                       {isEditing ? (
-                        <input 
-                          type="email"
-                          value={editProfile.email}
+                        <input type="email" value={editProfile.email}
                           onChange={(e) => setEditProfile({...editProfile, email: e.target.value})}
                           className="w-full bg-[#f8f7ff] border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-bold text-[#151a3c] outline-none focus:border-[#6360DF] transition-all"
                         />
@@ -375,9 +478,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                         <MapPinIcon size={12} className="mr-1.5" /> Business Address
                       </label>
                       {isEditing ? (
-                        <textarea 
-                          rows={2}
-                          value={editProfile.businessAddress}
+                        <textarea rows={2} value={editProfile.businessAddress}
                           onChange={(e) => setEditProfile({...editProfile, businessAddress: e.target.value})}
                           className="w-full bg-[#f8f7ff] border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-bold text-[#151a3c] outline-none focus:border-[#6360DF] transition-all resize-none"
                         />
@@ -412,8 +513,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                           <div className="space-y-2">
                             <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-widest">GST Type</label>
                             {isEditing ? (
-                              <select 
-                                value={editProfile.gstType}
+                              <select value={editProfile.gstType}
                                 onChange={(e) => setEditProfile({...editProfile, gstType: e.target.value})}
                                 className="w-full bg-white border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-bold text-[#151a3c] outline-none focus:border-[#6360DF] transition-all appearance-none"
                               >
@@ -427,9 +527,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                           <div className="space-y-2">
                             <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-widest">GST Number</label>
                             {isEditing ? (
-                              <input 
-                                type="text"
-                                value={editProfile.gstNumber}
+                              <input type="text" value={editProfile.gstNumber}
                                 onChange={(e) => setEditProfile({...editProfile, gstNumber: e.target.value})}
                                 className="w-full bg-white border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-bold text-[#151a3c] outline-none focus:border-[#6360DF] transition-all"
                               />
@@ -498,10 +596,15 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                       </button>
                       <button 
                         onClick={handleSaveProfile}
-                        className="bg-[#6360DF] hover:bg-[#5451d0] text-white font-bold px-8 py-3 rounded-xl shadow-lg shadow-[#6360df33] transition-all flex items-center space-x-2"
+                        disabled={isSavingProfile}
+                        className="bg-[#6360DF] hover:bg-[#5451d0] text-white font-bold px-8 py-3 rounded-xl shadow-lg shadow-[#6360df33] transition-all flex items-center space-x-2 disabled:opacity-60"
                       >
-                        <Save size={18} />
-                        <span>Save Changes</span>
+                        {isSavingProfile ? (
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <Save size={18} />
+                        )}
+                        <span>{isSavingProfile ? 'Saving...' : 'Save Changes'}</span>
                       </button>
                     </>
                   ) : (
@@ -536,15 +639,31 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                   <p className="text-[#6c7e96] text-sm font-medium mt-1 opacity-80">Here's what's happening with your fleet today.</p>
                 </div>
 
-                {/* Stats Grid */}
+                {/* Stats Grid — real data */}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                  <StatCard index={1} title="Total Earnings" value="$24,500" icon={<DollarSign />} color="bg-[#6360DF]" trend="+12.5% this month" trendIsPositive={true} />
-                  <StatCard index={2} title="Active Bookings" value="18" icon={<Users />} color="bg-blue-500" trend="+4 new today" trendIsPositive={true} />
-                  <StatCard index={3} title="Fleet Status" value="32/35" icon={<CarIcon />} color="bg-green-500" trend="92% utilization" trendIsPositive={true} />
-                  <StatCard index={4} title="Avg. Rental Time" value="2.4 days" icon={<Clock />} color="bg-orange-500" trend="-10% from last week" trendIsPositive={false} />
+                  <StatCard index={1} title="Total Vehicles" 
+                    value={statsLoading ? '—' : stats.totalVehicles.toString()} 
+                    icon={<CarIcon />} color="bg-[#6360DF]" 
+                    trend={statsLoading ? '...' : `${stats.availableVehicles} available now`} 
+                    trendIsPositive={true} />
+                  <StatCard index={2} title="Active Bookings" 
+                    value={statsLoading ? '—' : stats.activeBookings.toString()} 
+                    icon={<Users />} color="bg-blue-500" 
+                    trend="Confirmed + ongoing" 
+                    trendIsPositive={true} />
+                  <StatCard index={3} title="Fleet Status" 
+                    value={statsLoading ? '—' : `${stats.availableVehicles}/${stats.totalVehicles}`} 
+                    icon={<CarIcon />} color="bg-green-500" 
+                    trend={statsLoading || stats.totalVehicles === 0 ? '—' : `${Math.round((stats.availableVehicles / stats.totalVehicles) * 100)}% utilization`}
+                    trendIsPositive={true} />
+                  <StatCard index={4} title="Total Drivers" 
+                    value={statsLoading ? '—' : stats.totalDrivers.toString()} 
+                    icon={<Users />} color="bg-orange-500" 
+                    trend="Registered drivers" 
+                    trendIsPositive={true} />
                 </div>
 
-                {/* Fleet Status Card */}
+                {/* Fleet Status Card — real data */}
                 <motion.div 
                   initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -553,7 +672,12 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                 >
                   <div className="flex items-center justify-between px-10 py-8">
                     <h3 className="text-lg font-extrabold text-[#151a3c]">Current Fleet Status</h3>
-                    <button className="text-[#6360DF] font-bold text-sm hover:underline tracking-tight transition-all">View All Fleet</button>
+                    <button 
+                      onClick={() => setActiveTab('Fleet Listing')}
+                      className="text-[#6360DF] font-bold text-sm hover:underline tracking-tight transition-all"
+                    >
+                      View All Fleet
+                    </button>
                   </div>
                   
                   <div className="overflow-x-auto">
@@ -563,94 +687,76 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                           <th className="pl-10 pb-4 text-xs font-bold uppercase tracking-widest opacity-60">Vehicle</th>
                           <th className="pb-4 text-xs font-bold uppercase tracking-widest opacity-60">Plate Number</th>
                           <th className="pb-4 text-xs font-bold uppercase tracking-widest opacity-60">Status</th>
-                          <th className="pb-4 text-xs font-bold uppercase tracking-widest opacity-60">Earnings</th>
                           <th className="pr-10 pb-4 text-xs font-bold uppercase tracking-widest opacity-60"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
-                        {cars.map((car, idx) => (
-                          <motion.tr 
-                            key={car.id} 
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: 1 + idx * 0.1 }}
-                            className="group hover:bg-[#f8f9fc]/50 transition-colors"
-                          >
-                            <td className="py-6 pl-10">
-                              <div className="flex items-center space-x-4">
-                                <div className="w-12 h-12 bg-slate-100/60 rounded-[14px] flex items-center justify-center group-hover:bg-white transition-colors">
-                                  <CarIcon className="text-[#6360DF] w-6 h-6" />
+                        {statsLoading ? (
+                          <tr>
+                            <td colSpan={4} className="py-10 text-center text-[#6c7e96] text-sm font-medium">
+                              Loading fleet...
+                            </td>
+                          </tr>
+                        ) : fleetCars.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="py-10 text-center text-[#6c7e96] text-sm font-medium">
+                              No vehicles added yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          fleetCars.map((car, idx) => (
+                            <motion.tr 
+                              key={car.id} 
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: 1 + idx * 0.1 }}
+                              className="group hover:bg-[#f8f9fc]/50 transition-colors"
+                            >
+                              <td className="py-6 pl-10">
+                                <div className="flex items-center space-x-4">
+                                  <div className="w-12 h-12 bg-slate-100/60 rounded-[14px] flex items-center justify-center group-hover:bg-white transition-colors">
+                                    <CarIcon className="text-[#6360DF] w-6 h-6" />
+                                  </div>
+                                  <span className="font-bold text-[#151a3c] text-[15px]">{car.name}</span>
                                 </div>
-                                <span className="font-bold text-[#151a3c] text-[15px]">{car.name}</span>
-                              </div>
-                            </td>
-                            <td className="py-6 text-[#6c7e96] font-semibold text-[14px]">{car.plate}</td>
-                            <td className="py-6">
-                              <span className={`px-4 py-1.5 rounded-full text-[11px] font-extrabold tracking-wide ${car.statusColor}`}>
-                                {car.status}
-                              </span>
-                            </td>
-                            <td className="py-6 font-extrabold text-[#151a3c] text-[15px]">{car.earnings}</td>
-                            <td className="py-6 pr-10 text-right">
-                              <button className="p-2 text-[#cbd5e1] hover:text-[#6c7e96] hover:bg-white rounded-xl transition-all">
-                                <MoreVertical className="w-5 h-5" />
-                              </button>
-                            </td>
-                          </motion.tr>
-                        ))}
+                              </td>
+                              <td className="py-6 text-[#6c7e96] font-semibold text-[14px]">{car.plate}</td>
+                              <td className="py-6">
+                                <span className={`px-4 py-1.5 rounded-full text-[11px] font-extrabold tracking-wide ${car.statusColor}`}>
+                                  {car.status}
+                                </span>
+                              </td>
+                              <td className="py-6 pr-10 text-right">
+                                <button className="p-2 text-[#cbd5e1] hover:text-[#6c7e96] hover:bg-white rounded-xl transition-all">
+                                  <MoreVertical className="w-5 h-5" />
+                                </button>
+                              </td>
+                            </motion.tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
                 </motion.div>
               </motion.div>
             ) : activeTab === 'Fleet Listing' ? (
-              <motion.div
-                key="fleet-listing-view"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.3 }}
-              >
+              <motion.div key="fleet-listing-view" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
                 <FleetListing />
               </motion.div>
             ) : activeTab === 'Bookings' ? (
-              <motion.div
-                key="bookings-view"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.3 }}
-              >
+              <motion.div key="bookings-view" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
                 <BookingsPage />
               </motion.div>
             ) : activeTab === 'Drivers' ? (
-              <motion.div
-                key="drivers-view"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.3 }}
-              >
+              <motion.div key="drivers-view" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
                 <DriversPage />
               </motion.div>
             ) : activeTab === 'Allocation' ? (
-              <motion.div
-                key="allocation-view"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.3 }}
-              >
+              <motion.div key="allocation-view" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
                 <AllocationPage />
               </motion.div>
             ) : activeTab === 'Reminders' ? (
-              <motion.div
-                key="reminders-view"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.3 }}
-              >
+              <motion.div key="reminders-view" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
                 <RemindersPage />
               </motion.div>
             ) : (
@@ -663,7 +769,6 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                 className="h-full flex flex-col items-center justify-center text-center py-20"
               >
                 <div className="w-20 h-20 bg-[#EEEDFA] rounded-3xl flex items-center justify-center mb-6 text-[#6360DF]">
-                  {/* Added <any> cast to cloneElement to allow the 'size' prop */}
                   {sidebarItems.find(i => i.label === activeTab)?.icon && React.cloneElement(sidebarItems.find(i => i.label === activeTab)?.icon as React.ReactElement<any>, { size: 40 })}
                 </div>
                 <h2 className="text-3xl font-bold text-[#151a3c] mb-2">{activeTab}</h2>

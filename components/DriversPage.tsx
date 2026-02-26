@@ -1,18 +1,20 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Search, 
   UserPlus, 
   Eye, 
   Pencil, 
   Trash2, 
-  ChevronDown 
+  ChevronDown,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'react-hot-toast';
+import { supabase, getCurrentUser } from '../supabaseClient';
 import AddDriver from './AddDriver';
 
 interface Driver {
-  id: number;
+  id: string;
   name: string;
   initials: string;
   avatarColor: string;
@@ -25,95 +27,85 @@ interface Driver {
   status: 'COMPLETED' | 'NOT COMPLETED';
 }
 
+// Cycle through a few colors for avatars
+const AVATAR_COLORS = [
+  { bg: '#D1FAE5', text: '#059669' },
+  { bg: '#EEEDFA', text: '#6360DF' },
+  { bg: '#F3F4F6', text: '#6c7e96' },
+  { bg: '#FEF3C7', text: '#D97706' },
+];
+
 const DriversPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [view, setView] = useState<'list' | 'add'>('list');
+  const [driversData, setDriversData] = useState<Driver[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [driversData, setDriversData] = useState<Driver[]>([
-    {
-      id: 1,
-      name: "Rajesh Kumar",
-      initials: "RK",
-      avatarColor: "#D1FAE5",
-      avatarTextColor: "#059669",
-      location: "Panjim",
-      phone: "+91 98765 43210",
-      licenseNo: "DL-1234567890123",
-      tripsCompleted: 3,
-      tripsTotal: 7,
-      status: "COMPLETED"
-    },
-    {
-      id: 2,
-      name: "Amit Singh",
-      initials: "AS",
-      avatarColor: "#EEEDFA",
-      avatarTextColor: "#6360DF",
-      location: "Margao",
-      phone: "+91 88776 55443",
-      licenseNo: "DL-9876543210987",
-      tripsCompleted: 6,
-      tripsTotal: 10,
-      status: "NOT COMPLETED"
-    },
-    {
-      id: 3,
-      name: "Vikram Patil",
-      initials: "VP",
-      avatarColor: "#EEEDFA",
-      avatarTextColor: "#6360DF",
-      location: "Porvorim",
-      phone: "+91 77665 44321",
-      licenseNo: "DL-5544332211009",
-      tripsCompleted: 8,
-      tripsTotal: 10,
-      status: "COMPLETED"
-    },
-    {
-      id: 4,
-      name: "Suresh Mehra",
-      initials: "SM",
-      avatarColor: "#F3F4F6",
-      avatarTextColor: "#6c7e96",
-      location: "Miramar",
-      phone: "+91 91122 33445",
-      licenseNo: "DL-1122334455667",
-      tripsCompleted: 2,
-      tripsTotal: 5,
-      status: "NOT COMPLETED"
-    },
-    {
-      id: 5,
-      name: "Sunil Jha",
-      initials: "SJ",
-      avatarColor: "#D1FAE5",
-      avatarTextColor: "#059669",
-      location: "Mapusa",
-      phone: "+91 90088 11223",
-      licenseNo: "DL-9988776655443",
-      tripsCompleted: 2,
-      tripsTotal: 5,
-      status: "COMPLETED"
+  // ── Load drivers from DB ──────────────────────────────────────
+  const loadDrivers = async () => {
+    setLoading(true);
+    const authUser = await getCurrentUser();
+    if (!authUser) { setLoading(false); return; }
+
+    const { data: ownerRow } = await supabase
+      .from('owners').select('id').eq('user_id', authUser.id).single();
+    if (!ownerRow) { setLoading(false); return; }
+
+    const { data, error } = await supabase
+      .from('drivers')
+      .select('id, full_name, phone, license_no, current_location, status')
+      .eq('owner_id', ownerRow.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error loading drivers:', error);
+      toast.error('Failed to load drivers.');
+      setLoading(false);
+      return;
     }
-  ]);
 
-  const handleSaveDriver = (newDriver: { name: string; phone: string; licenseNo: string }) => {
-    const initials = newDriver.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-    const driver: Driver = {
-      id: Date.now(),
-      name: newDriver.name,
-      initials,
-      avatarColor: "#EEEDFA",
-      avatarTextColor: "#6360DF",
-      location: "Not Assigned",
-      phone: `+91 ${newDriver.phone}`,
-      licenseNo: newDriver.licenseNo,
-      tripsCompleted: 0,
-      tripsTotal: 0,
-      status: "NOT COMPLETED"
-    };
-    setDriversData(prev => [driver, ...prev]);
+    const mapped: Driver[] = (data || []).map((d: any, idx: number) => {
+      const initials = d.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2);
+      const color = AVATAR_COLORS[idx % AVATAR_COLORS.length];
+      return {
+        id: d.id,
+        name: d.full_name,
+        initials,
+        avatarColor: color.bg,
+        avatarTextColor: color.text,
+        location: d.current_location || 'Not Assigned',
+        phone: d.phone,
+        licenseNo: d.license_no,
+        tripsCompleted: 0,
+        tripsTotal: 0,
+        status: d.status === 'active' ? 'NOT COMPLETED' : 'COMPLETED',
+      };
+    });
+
+    setDriversData(mapped);
+    setLoading(false);
+  };
+  // ─────────────────────────────────────────────────────────────
+
+  useEffect(() => { loadDrivers(); }, []);
+
+  // ── Delete driver ─────────────────────────────────────────────
+  const handleDelete = async (id: string) => {
+    if (!confirm('Delete this driver?')) return;
+
+    const { error } = await supabase.from('drivers').delete().eq('id', id);
+    if (error) {
+      toast.error('Failed to delete driver.');
+      return;
+    }
+    toast.success('Driver deleted.');
+    setDriversData(prev => prev.filter(d => d.id !== id));
+  };
+  // ─────────────────────────────────────────────────────────────
+
+  const handleSaveDriver = async (_newDriver: { name: string; phone: string; licenseNo: string }) => {
+    await loadDrivers();
     setView('list');
   };
 
@@ -189,50 +181,75 @@ const DriversPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#d1d0eb]/10">
-                    {driversData.filter(d => {
-                      if (filterStatus === 'All') return true;
-                      return d.status === filterStatus.toUpperCase();
-                    }).filter(d => d.name.toLowerCase().includes(searchQuery.toLowerCase())).map((driver) => (
-                      <tr key={driver.id} className="group hover:bg-[#F8F9FA] transition-colors">
-                        <td className="py-5 pl-10 whitespace-nowrap">
-                          <div className="flex items-center">
-                            <div 
-                              className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-extrabold"
-                              style={{ backgroundColor: driver.avatarColor, color: driver.avatarTextColor }}
-                            >
-                              {driver.initials}
-                            </div>
-                            <span className="ml-3 font-bold text-[#151a3c] text-sm">{driver.name}</span>
-                          </div>
-                        </td>
-                        <td className="py-5 px-6 text-sm font-medium text-[#151a3c] whitespace-nowrap">
-                          {driver.location}
-                        </td>
-                        <td className="py-5 px-6 text-sm font-medium text-[#151a3c] whitespace-nowrap">
-                          {driver.phone}
-                        </td>
-                        <td className="py-5 px-6 text-center text-sm font-medium text-[#151a3c]">
-                          {driver.tripsCompleted}/{driver.tripsTotal}
-                        </td>
-                        <td className="py-5 px-6">
-                          <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-extrabold tracking-widest ${
-                            driver.status === 'COMPLETED' ? 'bg-[#D1FAE5] text-[#059669]' : 'bg-[#FEF3C7] text-[#D97706]'
-                          }`}>
-                            <div className={`w-1.5 h-1.5 rounded-full mr-2 ${
-                              driver.status === 'COMPLETED' ? 'bg-[#059669]' : 'bg-[#D97706]'
-                            }`} />
-                            {driver.status}
-                          </div>
-                        </td>
-                        <td className="py-5 px-10 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end space-x-3">
-                            <button className="text-[#6c7e96] hover:text-[#6360DF] transition-colors"><Eye size={18} /></button>
-                            <button className="text-[#6c7e96] hover:text-[#6360DF] transition-colors"><Pencil size={18} /></button>
-                            <button className="text-[#6c7e96] hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
+                    {loading ? (
+                      <tr>
+                        <td colSpan={6} className="py-16 text-center">
+                          <div className="flex items-center justify-center text-[#6c7e96]">
+                            <Loader2 size={22} className="animate-spin mr-2" />
+                            <span className="text-sm font-medium">Loading drivers...</span>
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    ) : driversData.filter(d => {
+                      if (filterStatus === 'All') return true;
+                      return d.status === filterStatus.toUpperCase();
+                    }).filter(d => d.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-16 text-center text-[#6c7e96] text-sm font-medium">
+                          {driversData.length === 0 ? 'No drivers added yet. Click "Add Driver" to get started.' : 'No drivers match your search.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      driversData.filter(d => {
+                        if (filterStatus === 'All') return true;
+                        return d.status === filterStatus.toUpperCase();
+                      }).filter(d => d.name.toLowerCase().includes(searchQuery.toLowerCase())).map((driver) => (
+                        <tr key={driver.id} className="group hover:bg-[#F8F9FA] transition-colors">
+                          <td className="py-5 pl-10 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div 
+                                className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-extrabold"
+                                style={{ backgroundColor: driver.avatarColor, color: driver.avatarTextColor }}
+                              >
+                                {driver.initials}
+                              </div>
+                              <span className="ml-3 font-bold text-[#151a3c] text-sm">{driver.name}</span>
+                            </div>
+                          </td>
+                          <td className="py-5 px-6 text-sm font-medium text-[#151a3c] whitespace-nowrap">
+                            {driver.location}
+                          </td>
+                          <td className="py-5 px-6 text-sm font-medium text-[#151a3c] whitespace-nowrap">
+                            {driver.phone}
+                          </td>
+                          <td className="py-5 px-6 text-center text-sm font-medium text-[#151a3c]">
+                            {driver.tripsCompleted}/{driver.tripsTotal}
+                          </td>
+                          <td className="py-5 px-6">
+                            <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-extrabold tracking-widest ${
+                              driver.status === 'COMPLETED' ? 'bg-[#D1FAE5] text-[#059669]' : 'bg-[#FEF3C7] text-[#D97706]'
+                            }`}>
+                              <div className={`w-1.5 h-1.5 rounded-full mr-2 ${
+                                driver.status === 'COMPLETED' ? 'bg-[#059669]' : 'bg-[#D97706]'
+                              }`} />
+                              {driver.status}
+                            </div>
+                          </td>
+                          <td className="py-5 px-10 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end space-x-3">
+                              <button className="text-[#6c7e96] hover:text-[#6360DF] transition-colors"><Eye size={18} /></button>
+                              <button className="text-[#6c7e96] hover:text-[#6360DF] transition-colors"><Pencil size={18} /></button>
+                              <button 
+                                onClick={() => handleDelete(driver.id)}
+                                className="text-[#6c7e96] hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
