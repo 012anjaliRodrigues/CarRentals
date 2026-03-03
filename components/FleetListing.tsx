@@ -1,14 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Calendar, 
-  Plus, 
-  Eye, 
-  Car as CarIcon,
-  ArrowLeft,
-  Edit,
-  Trash2,
-  Bell,
-  Loader2
+  Calendar, Plus, Eye, Car as CarIcon,
+  ArrowLeft, Edit, Trash2, Bell, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -17,87 +10,130 @@ import AddNewVehicle from './AddNewVehicle';
 import VehicleProfile from './VehicleProfile';
 
 interface VehicleDetail {
+  id: string;
   plate: string;
   status: 'In use' | 'Available' | 'Maintenance';
   booking?: { customer: string; duration: string };
 }
 
-// ── Types ─────────────────────────────────────────────────────
 interface FleetRow {
   id: string;
-  name: string;         // brand + model name
+  name: string;
   transmission: string;
   fuel: string;
   rate: string;
   availability: string;
   mfgYear: string;
   color: string;
-  type: string;         // category name uppercased
+  type: string;
   modelId: string;
 }
 
 interface GroupedFleet {
   [category: string]: FleetRow[];
 }
-// ─────────────────────────────────────────────────────────────
 
-const VehicleDetailView: React.FC<{ 
-  vehicle: any; 
-  category: string; 
+// ── VehicleDetailView ─────────────────────────────────────────
+const VehicleDetailView: React.FC<{
+  vehicle: any;
+  category: string;
   onBack: () => void;
   onAdd: () => void;
-  onPlateClick: (plate: string, status: 'In use' | 'Available' | 'Maintenance') => void;
-}> = ({ vehicle, category, onBack, onAdd, onPlateClick }) => {
+  onPlateClick: (vehicleId: string, plate: string, status: 'In use' | 'Available' | 'Maintenance') => void;
+  onFleetReload: () => void;
+}> = ({ vehicle, category, onBack, onAdd, onPlateClick, onFleetReload }) => {
 
   const [details, setDetails] = useState<VehicleDetail[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchVehicleInstances = async () => {
-      setLoading(true);
-      const authUser = await getCurrentUser();
-      if (!authUser) return;
+  const fetchVehicleInstances = async () => {
+    setLoading(true);
+    const authUser = await getCurrentUser();
+    if (!authUser) return;
 
-      const { data: ownerRow } = await supabase
-        .from('owners').select('id').eq('user_id', authUser.id).single();
-      if (!ownerRow) return;
+    const { data: ownerRow } = await supabase
+      .from('owners').select('id').eq('user_id', authUser.id).single();
+    if (!ownerRow) return;
 
-      const { data, error } = await supabase
-        .from('vehicles')
-        .select('id, registration_no, status')
-        .eq('owner_id', ownerRow.id)
-        .eq('model_id', vehicle.modelId);
+    // Fetch vehicles for this model
+    const { data: vehicles, error } = await supabase
+      .from('vehicles')
+      .select('id, registration_no, status')
+      .eq('owner_id', ownerRow.id)
+      .eq('model_id', vehicle.modelId);
 
-      if (error) { console.error(error); return; }
+    if (error) { console.error(error); setLoading(false); return; }
 
-      setDetails((data || []).map((v: any) => ({
-        plate: v.registration_no,
-        status: v.status === 'available' ? 'Available'
-              : v.status === 'rented'    ? 'In use'
-              : 'Maintenance',
-      })));
-      setLoading(false);
-    };
-    fetchVehicleInstances();
-  }, [vehicle.modelId]);
+    const vehicleList = vehicles || [];
+    const vehicleIds = vehicleList.map((v: any) => v.id);
+
+    // Fetch active bookings for these vehicles
+    let activeBookingMap: Record<string, { customer: string; duration: string }> = {};
+    if (vehicleIds.length > 0) {
+      const { data: bookingDetails } = await supabase
+        .from('booking_details')
+        .select('vehicle_id, bookings(customer_name, pickup_at, drop_at, status)')
+        .in('vehicle_id', vehicleIds)
+        .in('bookings.status', ['BOOKED', 'ONGOING']);
+
+      ((bookingDetails as any[]) || []).forEach((bd: any) => {
+        if (bd.bookings && ['BOOKED', 'ONGOING'].includes(bd.bookings.status)) {
+          const pickupDate = new Date(bd.bookings.pickup_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+          const dropDate = new Date(bd.bookings.drop_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+          activeBookingMap[bd.vehicle_id] = {
+            customer: bd.bookings.customer_name,
+            duration: `${pickupDate} - ${dropDate}`,
+          };
+        }
+      });
+    }
+
+    setDetails(vehicleList.map((v: any) => ({
+      id: v.id,
+      plate: v.registration_no,
+      status: v.status === 'available' ? 'Available'
+            : v.status === 'rented'    ? 'In use'
+            : 'Maintenance',
+      booking: activeBookingMap[v.id] || undefined,
+    })));
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchVehicleInstances(); }, [vehicle.modelId]);
 
   const totalVehicles = details.length;
   const availableVehicles = details.filter(d => d.status === 'Available').length;
 
   const getStatusStyles = (status: string) => {
     switch (status) {
-      case 'In use':     return 'bg-[#DBEAFE] text-[#1E40AF]';
-      case 'Available':  return 'bg-[#D1FAE5] text-[#065F46]';
-      case 'Maintenance':return 'bg-[#FEF3C7] text-[#92400E]';
-      default:           return 'bg-gray-100 text-gray-600';
+      case 'In use':      return 'bg-[#DBEAFE] text-[#1E40AF]';
+      case 'Available':   return 'bg-[#D1FAE5] text-[#065F46]';
+      case 'Maintenance': return 'bg-[#FEF3C7] text-[#92400E]';
+      default:            return 'bg-gray-100 text-gray-600';
+    }
+  };
+
+  const handleDelete = async (vehicleId: string) => {
+    setDeletingId(vehicleId);
+    try {
+      const { error } = await supabase.from('vehicles').delete().eq('id', vehicleId);
+      if (error) { toast.error('Failed to delete vehicle: ' + error.message); return; }
+      toast.success('Vehicle deleted successfully.');
+      setConfirmDeleteId(null);
+      await fetchVehicleInstances();
+      onFleetReload();
+    } catch {
+      toast.error('Something went wrong.');
+    } finally {
+      setDeletingId(null);
     }
   };
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -20 }}
+    <motion.div
+      initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
       className="space-y-6"
     >
       <div className="flex items-center justify-between">
@@ -115,6 +151,7 @@ const VehicleDetailView: React.FC<{
         </div>
       </div>
 
+      {/* Model info banner */}
       <div className="bg-[#6360DF] rounded-2xl p-6 text-white flex items-center space-x-8 shadow-xl shadow-[#6360df22]">
         <div className="flex flex-col">
           <span className="text-[10px] font-bold tracking-widest uppercase opacity-70">Category</span>
@@ -142,6 +179,7 @@ const VehicleDetailView: React.FC<{
         </div>
       </div>
 
+      {/* Vehicles table */}
       <div className="bg-white rounded-[2rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
         <div className="grid grid-cols-12 px-10 py-5 text-[11px] font-bold text-[#6c7e96] tracking-widest uppercase border-b border-[#d1d0eb]/30 bg-[#F9F9FF]/50">
           <div className="col-span-3">Vehicle No.</div>
@@ -161,42 +199,78 @@ const VehicleDetailView: React.FC<{
           </div>
         ) : (
           <div className="divide-y divide-slate-50">
-            {details.map((detail, idx) => (
-              <div key={detail.plate} className="grid grid-cols-12 px-10 py-5 items-center hover:bg-[#f8f9fc]/50 transition-colors">
-                <div 
-                  onClick={() => onPlateClick(detail.plate, detail.status)}
-                  className="col-span-3 font-bold text-[#151a3c] text-[15px] hover:text-[#6360DF] cursor-pointer transition-colors"
-                >
-                  {detail.plate}
-                </div>
-                <div className="col-span-2">
-                  <span className={`px-4 py-1.5 rounded-full text-[11px] font-extrabold tracking-wide ${getStatusStyles(detail.status)}`}>
-                    {detail.status}
-                  </span>
-                </div>
-                <div className="col-span-5">
-                  {detail.booking ? (
-                    <div className="flex flex-col">
-                      <span className="font-bold text-[#151a3c] text-[14px]">{detail.booking.customer}</span>
-                      <span className="text-[#6c7e96] text-[12px] font-medium">{detail.booking.duration}</span>
-                    </div>
-                  ) : (
-                    <span className="text-[#6c7e96] text-[13px] font-medium italic">No active booking</span>
-                  )}
-                </div>
-                <div className="col-span-2 flex items-center justify-end space-x-2">
-                  {detail.status === 'Available' && (
-                    <button className="flex items-center space-x-1.5 bg-[#6360DF] text-white px-3 py-1.5 rounded-lg text-[11px] font-bold hover:bg-[#5451d0] transition-all mr-2">
-                      <Plus size={14} /><span>Booking</span>
+            {details.map((detail) => (
+              <div key={detail.id}>
+                <div className="grid grid-cols-12 px-10 py-5 items-center hover:bg-[#f8f9fc]/50 transition-colors">
+                  {/* Plate — clickable */}
+                  <div
+                    onClick={() => onPlateClick(detail.id, detail.plate, detail.status)}
+                    className="col-span-3 font-bold text-[#151a3c] text-[15px] hover:text-[#6360DF] cursor-pointer transition-colors"
+                  >
+                    {detail.plate}
+                  </div>
+
+                  {/* Status */}
+                  <div className="col-span-2">
+                    <span className={`px-4 py-1.5 rounded-full text-[11px] font-extrabold tracking-wide ${getStatusStyles(detail.status)}`}>
+                      {detail.status}
+                    </span>
+                  </div>
+
+                  {/* Booking */}
+                  <div className="col-span-5">
+                    {detail.booking ? (
+                      <div className="flex flex-col">
+                        <span className="font-bold text-[#151a3c] text-[14px]">{detail.booking.customer}</span>
+                        <span className="text-[#6c7e96] text-[12px] font-medium">{detail.booking.duration}</span>
+                      </div>
+                    ) : (
+                      <span className="text-[#6c7e96] text-[13px] font-medium italic">No active booking</span>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="col-span-2 flex items-center justify-end space-x-2">
+                    {detail.status === 'Available' && (
+                      <button className="flex items-center space-x-1.5 bg-[#6360DF] text-white px-3 py-1.5 rounded-lg text-[11px] font-bold hover:bg-[#5451d0] transition-all mr-2">
+                        <Plus size={14} /><span>Booking</span>
+                      </button>
+                    )}
+                    <button className="p-2 text-[#cbd5e1] hover:text-[#6360DF] transition-colors"><Edit size={16} /></button>
+                    <button
+                      onClick={() => setConfirmDeleteId(detail.id)}
+                      className="p-2 text-[#cbd5e1] hover:text-red-500 transition-colors"
+                    >
+                      {deletingId === detail.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                     </button>
-                  )}
-                  <button className="p-2 text-[#cbd5e1] hover:text-[#6360DF] transition-colors"><Edit size={16} /></button>
-                  <button className="p-2 text-[#cbd5e1] hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
-                  <button className="p-2 text-[#cbd5e1] hover:text-orange-500 transition-colors relative">
-                    <Bell size={16} />
-                    {idx % 3 === 0 && <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full border border-white"></span>}
-                  </button>
+                    <button className="p-2 text-[#cbd5e1] hover:text-orange-500 transition-colors relative">
+                      <Bell size={16} />
+                    </button>
+                  </div>
                 </div>
+
+                {/* Inline delete confirm */}
+                <AnimatePresence>
+                  {confirmDeleteId === detail.id && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                      className="bg-red-50 border-t border-red-100 px-10 py-4 flex items-center justify-between"
+                    >
+                      <p className="text-sm font-bold text-red-700">Delete <span className="font-extrabold">{detail.plate}</span>? This cannot be undone.</p>
+                      <div className="flex items-center space-x-3">
+                        <button onClick={() => setConfirmDeleteId(null)}
+                          className="px-4 py-2 text-sm font-bold text-[#6c7e96] bg-white border border-[#d1d0eb] rounded-lg hover:bg-slate-50 transition-all">
+                          Cancel
+                        </button>
+                        <button onClick={() => handleDelete(detail.id)}
+                          className="px-4 py-2 text-sm font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-all flex items-center space-x-1.5">
+                          {deletingId === detail.id ? <Loader2 size={14} className="animate-spin" /> : null}
+                          <span>Yes, Delete</span>
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             ))}
           </div>
@@ -210,13 +284,13 @@ const VehicleDetailView: React.FC<{
 const FleetListing: React.FC = () => {
   const [view, setView] = useState<'list' | 'detail' | 'add' | 'profile'>('list');
   const [selectedVehicle, setSelectedVehicle] = useState<any>(null);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('');
   const [selectedPlate, setSelectedPlate] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<'In use' | 'Available' | 'Maintenance'>('Available');
   const [category, setCategory] = useState<string>('');
   const [groupedFleet, setGroupedFleet] = useState<GroupedFleet>({});
   const [loading, setLoading] = useState(true);
 
-  // ── Load fleet from DB ──────────────────────────────────────
   const loadFleet = async () => {
     setLoading(true);
     const authUser = await getCurrentUser();
@@ -226,7 +300,6 @@ const FleetListing: React.FC = () => {
       .from('owners').select('id').eq('user_id', authUser.id).single();
     if (!ownerRow) { setLoading(false); return; }
 
-    // Join vehicles → models → categories, group by model, count availability
     const { data, error } = await supabase
       .from('vehicles')
       .select(`
@@ -239,20 +312,17 @@ const FleetListing: React.FC = () => {
       .eq('owner_id', ownerRow.id);
 
     if (error) {
-      console.error('Error loading fleet:', error);
       toast.error('Failed to load fleet data.');
       setLoading(false);
       return;
     }
 
-    // Group by model, compute availability per model
     const modelMap: Record<string, any> = {};
-
     ((data as any[]) || []).forEach((v: any) => {
-            const model = v.models;
+      const model = v.models;
       if (!model) return;
       const key = model.id;
-      const catName = model.categories?.name?.toUpperCase() + 'S'; // e.g. HATCHBACKS
+      const catName = model.categories?.name?.toUpperCase() + 'S';
 
       if (!modelMap[key]) {
         modelMap[key] = {
@@ -261,8 +331,7 @@ const FleetListing: React.FC = () => {
           transmission: v.transmission || model.default_transmission || '',
           fuel: v.fuel_type || model.default_fuel_type || '',
           rate: '—',
-          total: 0,
-          available: 0,
+          total: 0, available: 0,
           mfgYear: v.mfg_year?.toString() || '',
           color: v.color || '',
           type: catName,
@@ -273,29 +342,22 @@ const FleetListing: React.FC = () => {
       if (v.status === 'available') modelMap[key].available += 1;
     });
 
-    // Build grouped structure
     const grouped: GroupedFleet = {};
     Object.values(modelMap).forEach((m: any) => {
       const cat = m.type;
       if (!grouped[cat]) grouped[cat] = [];
       grouped[cat].push({
-        id: m.id,
-        name: m.name,
-        transmission: m.transmission,
-        fuel: m.fuel,
-        rate: '—',
+        id: m.id, name: m.name, transmission: m.transmission,
+        fuel: m.fuel, rate: '—',
         availability: `${m.available}/${m.total}`,
-        mfgYear: m.mfgYear,
-        color: m.color,
-        type: m.type,
-        modelId: m.modelId,
+        mfgYear: m.mfgYear, color: m.color,
+        type: m.type, modelId: m.modelId,
       });
     });
 
     setGroupedFleet(grouped);
     setLoading(false);
   };
-  // ───────────────────────────────────────────────────────────
 
   useEffect(() => { loadFleet(); }, []);
 
@@ -318,7 +380,7 @@ const FleetListing: React.FC = () => {
   );
 
   const VehicleRow: React.FC<{ item: FleetRow; cat: string }> = ({ item, cat }) => (
-    <div 
+    <div
       onClick={() => { setSelectedVehicle(item); setCategory(cat); setView('detail'); }}
       className="grid grid-cols-12 px-10 py-6 border-b border-[#d1d0eb]/10 items-center hover:bg-[#F8F9FA] transition-colors group cursor-pointer"
     >
@@ -328,25 +390,16 @@ const FleetListing: React.FC = () => {
       </div>
       <div className="col-span-2 text-[#6c7e96] text-[14px] font-medium">{item.transmission}</div>
       <div className="col-span-2 text-[#6c7e96] text-[14px] font-medium">{item.fuel}</div>
-      <div className="col-span-2">
-        <span className="font-bold text-[#151a3c] text-[14px]">{item.availability}</span>
-      </div>
+      <div className="col-span-2"><span className="font-bold text-[#151a3c] text-[14px]">{item.availability}</span></div>
       <div className="col-span-1 text-right font-extrabold text-[#151a3c] text-[15px] pr-4">{item.rate}</div>
       <div className="col-span-1 flex justify-end">
-        <button className="p-2 text-[#6360DF] hover:bg-[#EEEDFA] rounded-full transition-all">
-          <Eye size={18} />
-        </button>
+        <button className="p-2 text-[#6360DF] hover:bg-[#EEEDFA] rounded-full transition-all"><Eye size={18} /></button>
       </div>
     </div>
   );
 
-  const handleSaveVehicle = async (newVehicle: any) => {
-    // Reload fleet from DB so list reflects the new vehicle
-    await loadFleet();
-    setView('list');
-  };
-
-  const openProfile = (plate: string, status: 'In use' | 'Available' | 'Maintenance') => {
+  const openProfile = (vehicleId: string, plate: string, status: 'In use' | 'Available' | 'Maintenance') => {
+    setSelectedVehicleId(vehicleId);
     setSelectedPlate(plate);
     setSelectedStatus(status);
     setView('profile');
@@ -356,13 +409,7 @@ const FleetListing: React.FC = () => {
     <div className="min-h-full">
       <AnimatePresence mode="wait">
         {view === 'list' && (
-          <motion.div 
-            key="list"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="space-y-6"
-          >
+          <motion.div key="list" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <h2 className="text-[24px] font-extrabold text-[#151a3c] tracking-tight">Fleet Listing</h2>
               <div className="flex items-center space-x-3">
@@ -370,7 +417,7 @@ const FleetListing: React.FC = () => {
                   <Calendar size={18} className="text-[#6c7e96]" />
                   <span>{new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
                 </div>
-                <button onClick={() => console.log('View Tariff')} className="bg-[#6360DF] hover:bg-[#5451d0] text-white px-8 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-[#6360df22] transition-all">
+                <button className="bg-[#6360DF] hover:bg-[#5451d0] text-white px-8 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-[#6360df22] transition-all">
                   Tariff
                 </button>
                 <button onClick={() => setView('add')} className="bg-[#6360DF] hover:bg-[#5451d0] text-white px-8 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-[#6360df22] transition-all flex items-center space-x-2">
@@ -381,7 +428,6 @@ const FleetListing: React.FC = () => {
 
             <div className="bg-white rounded-[2rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden mb-12">
               <TableHeader />
-
               {loading ? (
                 <div className="flex items-center justify-center py-20 text-[#6c7e96]">
                   <Loader2 size={24} className="animate-spin mr-2" />
@@ -397,7 +443,7 @@ const FleetListing: React.FC = () => {
                 Object.entries(groupedFleet).map(([cat, items]) => (
                   <React.Fragment key={cat}>
                     <CategoryHeader name={cat} />
-                    {(items as FleetRow[]).map((item, idx) => (                      
+                    {(items as FleetRow[]).map((item, idx) => (
                       <VehicleRow key={`${cat}-${idx}`} item={item} cat={cat} />
                     ))}
                   </React.Fragment>
@@ -408,20 +454,22 @@ const FleetListing: React.FC = () => {
         )}
 
         {view === 'detail' && selectedVehicle && (
-          <VehicleDetailView 
+          <VehicleDetailView
             key="detail"
-            vehicle={selectedVehicle} 
-            category={category} 
+            vehicle={selectedVehicle}
+            category={category}
             onBack={() => setView('list')}
             onAdd={() => setView('add')}
             onPlateClick={openProfile}
+            onFleetReload={loadFleet}
           />
         )}
 
         {view === 'profile' && selectedVehicle && (
-          <VehicleProfile 
+          <VehicleProfile
             key="profile"
             vehicle={selectedVehicle}
+            vehicleId={selectedVehicleId}
             instancePlate={selectedPlate}
             status={selectedStatus}
             onBack={() => setView('detail')}
@@ -429,9 +477,9 @@ const FleetListing: React.FC = () => {
         )}
 
         {view === 'add' && (
-          <AddNewVehicle 
+          <AddNewVehicle
             key="add"
-            onSave={handleSaveVehicle}
+            onSave={async () => { await loadFleet(); setView('list'); }}
             onCancel={() => setView('list')}
           />
         )}
