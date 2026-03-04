@@ -288,13 +288,18 @@ const AllocationPage: React.FC = () => {
       });
     });
 
-    // Sort: unallocated first, then by time
-    mapped.sort((a, b) => {
-      if (a.isAllocated !== b.isAllocated) return a.isAllocated ? 1 : -1;
-      const tA = a.locationType === 'Pick' ? a.pickupAt : a.dropAt;
-      const tB = b.locationType === 'Pick' ? b.pickupAt : b.dropAt;
-      return new Date(tA).getTime() - new Date(tB).getTime();
-    });
+    // Sort: most recent booking first, Pick before Drop within same booking
+mapped.sort((a, b) => {
+  const tA = new Date(a.pickupAt).getTime();
+  const tB = new Date(b.pickupAt).getTime();
+  if (tA !== tB) return tB - tA; // most recent first
+  // Same booking → Pick before Drop
+  if (a.bookingId === b.bookingId) {
+    return a.locationType === 'Pick' ? -1 : 1;
+  }
+  return 0;
+});
+
 
     setRows(mapped);
     setDrivers(((driversRes.data as any[]) || []).map((d: any) => ({ id: d.id, name: d.full_name })));

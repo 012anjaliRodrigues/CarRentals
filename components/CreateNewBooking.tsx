@@ -209,11 +209,10 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
   const handleConfirm = async () => {
     if (!isConfirmEnabled || !ownerId) return;
     setIsSaving(true);
-
+  
     try {
-      // Generate reference
       const ref = `BK-${Date.now().toString().slice(-8)}`;
-
+  
       const { data: bookingRow, error: bookingErr } = await supabase
         .from('bookings')
         .insert({
@@ -242,31 +241,46 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         })
         .select('id')
         .single();
-
+  
       if (bookingErr || !bookingRow) {
         toast.error('Failed to save booking: ' + bookingErr?.message);
         return;
       }
-
-      // Insert booking_details rows (one per selected model)
-      const detailRows = selectedVehicles.map(v => ({
-        owner_id: ownerId,
-        booking_id: bookingRow.id,
-        vehicle_id: v.vehicleId,
-        model_id: v.id,
-        quantity: v.quantity,
-        daily_rate: v.rate,
-        line_subtotal: v.rate * v.quantity,
-        discount_amount: 0,
-        tax_amount: 0,
-        total_amount: v.rate * v.quantity,
-      }));
-
+  
+      // ── One booking_detail row per individual vehicle unit ──
+      // Need to fetch all available vehicleIds per model from fleetData
+      const detailRows: any[] = [];
+  
+      for (const sv of selectedVehicles) {
+        // Get the full list of vehicleIds for this model from fleetData
+        let vehicleIds: string[] = [];
+        for (const vehicles of Object.values(fleetData)) {
+          const match = (vehicles as any[]).find((v: any) => v.id === sv.id);
+          if (match) { vehicleIds = match.vehicleIds; break; }
+        }
+  
+        // Create one row per unit, each with its own vehicle_id
+        for (let i = 0; i < sv.quantity; i++) {
+          detailRows.push({
+            owner_id: ownerId,
+            booking_id: bookingRow.id,
+            vehicle_id: vehicleIds[i] ?? vehicleIds[0], // fallback to first if not enough
+            model_id: sv.id,
+            quantity: 1,                                // always 1 per row now
+            daily_rate: sv.rate,
+            line_subtotal: sv.rate,
+            discount_amount: 0,
+            tax_amount: 0,
+            total_amount: sv.rate,
+          });
+        }
+      }
+  
       const { error: detailErr } = await supabase.from('booking_details').insert(detailRows);
       if (detailErr) {
         toast.error('Booking saved but details failed: ' + detailErr.message);
       }
-
+  
       toast.success('Booking confirmed!');
       onConfirm({
         customer: customerData,
@@ -274,7 +288,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         pricing: calculations,
         referenceId: ref,
       });
-
+  
     } catch (err) {
       console.error('Unexpected error saving booking:', err);
       toast.error('Something went wrong. Please try again.');

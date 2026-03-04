@@ -17,6 +17,7 @@ import AllocationPage from './AllocationPage';
 import RemindersPage from './RemindersPage';
 import HandoverPage from './HandoverPage';
 import { ClipboardList } from 'lucide-react';
+import VehiclesPage from './VehiclesPage';
 
 const StatCard: React.FC<{
   title: string; value: string; icon: React.ReactElement;
@@ -127,6 +128,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
   const sidebarItems = [
     { icon: <LayoutDashboard />, label: 'Dashboard' },
     { icon: <CarIcon />, label: 'Fleet Listing' },
+    { icon: <CarIcon />, label: 'Vehicles' },
     { icon: <Calendar />, label: 'Bookings' },
     { icon: <Users />, label: 'Drivers' },
     { icon: <Grid3X3 />, label: 'Allocation' },
@@ -643,6 +645,11 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
             {activeTab === 'Fleet Listing' && (
               <motion.div key="fleet" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}><FleetListing /></motion.div>
             )}
+            {activeTab === 'Vehicles' && (
+              <motion.div key="vehicles" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
+              <VehiclesPage />
+              </motion.div>
+            )}
             {activeTab === 'Bookings' && (
               <motion.div key="bookings" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}><BookingsPage /></motion.div>
             )}
@@ -660,7 +667,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
               <HandoverPage />
               </motion.div>
             )}
-            {!['Dashboard','Fleet Listing','Bookings','Drivers','Allocation','Reminders','Handover'].includes(activeTab) && (
+            {!['Dashboard','Fleet Listing','Vehicles','Bookings','Drivers','Allocation','Reminders','Handover'].includes(activeTab) && (
               <motion.div key="coming-soon" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.3 }}
                 className="h-full flex flex-col items-center justify-center text-center py-20">
                 <div className="w-20 h-20 bg-[#EEEDFA] rounded-3xl flex items-center justify-center mb-6 text-[#6360DF]">

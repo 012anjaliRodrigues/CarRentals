@@ -229,25 +229,67 @@ const VehicleDetailView: React.FC<{
                     )}
                   </div>
 
+
+                  
+
                   {/* Actions */}
-                  <div className="col-span-2 flex items-center justify-end space-x-2">
-                    {detail.status === 'Available' && (
-                      <button className="flex items-center space-x-1.5 bg-[#6360DF] text-white px-3 py-1.5 rounded-lg text-[11px] font-bold hover:bg-[#5451d0] transition-all mr-2">
-                        <Plus size={14} /><span>Booking</span>
-                      </button>
-                    )}
-                    <button className="p-2 text-[#cbd5e1] hover:text-[#6360DF] transition-colors"><Edit size={16} /></button>
-                    <button
-                      onClick={() => setConfirmDeleteId(detail.id)}
-                      className="p-2 text-[#cbd5e1] hover:text-red-500 transition-colors"
-                    >
-                      {deletingId === detail.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                    </button>
-                    <button className="p-2 text-[#cbd5e1] hover:text-orange-500 transition-colors relative">
-                      <Bell size={16} />
-                    </button>
-                  </div>
-                </div>
+                 {/* Actions */}
+<div className="col-span-2 flex items-center justify-end space-x-2">
+  {/* Status badge */}
+  <span className={`px-3 py-1.5 rounded-full text-[10px] font-extrabold tracking-widest ${
+    detail.booking ? 'bg-[#FEF3C7] text-[#D97706]' : 'bg-[#D1FAE5] text-[#059669]'
+  }`}>
+    {detail.booking ? 'Ongoing' : 'Upcoming'}
+  </span>
+
+  {/* Active / Inactive toggle */}
+  <button
+    onClick={async (e) => {
+      e.stopPropagation();
+      const newStatus = detail.status === 'Available' ? 'maintenance' : 'available';
+      const { error } = await supabase.from('vehicles').update({ status: newStatus }).eq('id', detail.id);
+      if (error) { toast.error('Failed to update status.'); return; }
+      toast.success(`Vehicle marked ${newStatus === 'available' ? 'Active' : 'Inactive'}.`);
+      fetchVehicleInstances();
+      onFleetReload();
+    }}
+    title={detail.status === 'Available' ? 'Mark Inactive' : 'Mark Active'}
+    className={`relative w-10 h-5 rounded-full transition-colors duration-300 shrink-0 ${
+      detail.status === 'Available' ? 'bg-[#6360DF]' : 'bg-slate-300'
+    }`}
+  >
+    <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-300 ${
+      detail.status === 'Available' ? 'left-5' : 'left-0.5'
+    }`} />
+  </button>
+  <span className={`text-[10px] font-extrabold tracking-widest ${
+    detail.status === 'Available' ? 'text-[#6360DF]' : 'text-slate-400'
+  }`}>
+    {detail.status === 'Available' ? 'Active' : 'Inactive'}
+  </span>
+
+  <button className="p-2 text-[#cbd5e1] hover:text-[#6360DF] transition-colors"><Edit size={16} /></button>
+  <button
+    onClick={() => setConfirmDeleteId(detail.id)}
+    className="p-2 text-[#cbd5e1] hover:text-red-500 transition-colors"
+  >
+    {deletingId === detail.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+  </button>
+  <button className="p-2 text-[#cbd5e1] hover:text-orange-500 transition-colors relative">
+    <Bell size={16} />
+  </button>
+</div>
+
+
+
+                </div> 
+
+
+
+
+
+
+                
 
                 {/* Inline delete confirm */}
                 <AnimatePresence>
