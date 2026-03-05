@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { getCurrentUser, getCurrentOwner, ensureDevSession, createOwnerIfNotExists, supabase } from './supabaseClient';
 
+
 const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<AppState>(AppState.SPLASH);
   const [userProfile, setUserProfile] = useState<UserProfile>({

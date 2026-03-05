@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import { Car, Headphones } from 'lucide-react';
-import { supabase } from '../supabaseClient';
 import { toast } from 'react-hot-toast';
 
 interface LoginScreenProps {
   onOtpSent: (phone: string) => void;
   onSkipToDashboard?: () => void;
-  onSkipToOnboarding?: () => void;  // ← new
+  onSkipToOnboarding?: () => void;
 }
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard, onSkipToOnboarding }) => {
@@ -18,19 +17,15 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard,
     if (phoneNumber.length < 10) return;
 
     const cleaned = phoneNumber.replace(/\D/g, '');
-    const fullPhone = `+91${cleaned}`;
 
     try {
       setIsLoading(true);
-      const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
-      if (error) {
-        toast.error(error.message || 'Failed to send OTP. Please try again.');
-        return;
-      }
+      // Mock OTP — no SMS sent, user enters 123456 on next screen
+      await new Promise(res => setTimeout(res, 600)); // small delay for UX
+      toast.success('OTP sent! Use 123456 to verify.');
       onOtpSent(cleaned);
-      toast.success('OTP sent successfully');
     } catch (err) {
-      toast.error('Something went wrong while sending OTP.');
+      toast.error('Something went wrong.');
     } finally {
       setIsLoading(false);
     }
@@ -92,15 +87,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard,
         >
           Skip to Dashboard (Demo)
         </div>
-
-        {/* ← new button, same style */}
         <div
           onClick={onSkipToOnboarding}
           className="bg-white/50 hover:bg-white border border-[#d1d0eb] px-4 py-2 rounded-full text-[11px] font-bold text-[#6360DF] cursor-pointer transition-all active:scale-95 shadow-sm"
         >
           Skip to Onboarding (Dev)
         </div>
-
         <div className="flex items-center space-x-2 text-[#151a3c] opacity-60 hover:opacity-100 transition-opacity cursor-pointer group">
           <div className="bg-[#151a3c]/10 p-1 rounded-md">
             <Headphones className="w-4 h-4" />

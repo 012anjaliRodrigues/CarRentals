@@ -5,40 +5,40 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// ─── Dev Session ────────────────────────────────────────────────────────────
-// Creates a fake email-based auth session for dev/demo use.
-// This lets RLS policies pass so all DB writes work without real phone OTP.
-// In production this is never called — OTP flow creates the real session.
+// ─── Mock Session (per phone number) ────────────────────────────────────────
+// Each phone number gets its own unique Supabase email-based session.
+// This means each owner has isolated data — drivers, vehicles, bookings etc.
+// Mock OTP is 123456. When real Twilio is ready, delete this and use phone OTP.
 
-const DEV_EMAIL = 'dev_owner@gaadidev.local';
-const DEV_PASSWORD = 'devpassword_gzai_2024';
+export const ensureDevSession = async (phone: string): Promise<string | null> => {
+  const mockEmail = `owner_${phone}@gaadidev.local`;
+  const mockPassword = 'gaadizai_mock_2024';
 
-export const ensureDevSession = async (): Promise<string | null> => {
-  // If session already exists, return the user id
+  // If already signed in as this exact owner, reuse session
   const { data: { session } } = await supabase.auth.getSession();
-  if (session?.user) return session.user.id;
+  if (session?.user?.email === mockEmail) return session.user.id;
 
-  // Try sign in first
-  const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-    email: DEV_EMAIL,
-    password: DEV_PASSWORD,
-  });
-
-  if (!signInError && signInData.user) {
-    return signInData.user.id;
+  // If signed in as a different owner, sign out first
+  if (session?.user) {
+    await supabase.auth.signOut();
   }
 
-  // First time — sign up
-  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-    email: DEV_EMAIL,
-    password: DEV_PASSWORD,
+  // Try signing in (returning owner)
+  const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+    email: mockEmail,
+    password: mockPassword,
   });
+  if (!signInError && signInData.user) return signInData.user.id;
 
+  // First time for this phone — create new account
+  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+    email: mockEmail,
+    password: mockPassword,
+  });
   if (signUpError) {
-    console.error('Dev session creation failed:', signUpError.message);
+    console.error('Mock signup failed:', signUpError.message);
     return null;
   }
-
   return signUpData.user?.id ?? null;
 };
 
@@ -87,7 +87,7 @@ export const createOwnerIfNotExists = async (userId: string, phone: string) => {
 
   if (existingOwner) return existingOwner;
 
-  // Also ensure public.users row exists
+  // Ensure public.users row exists
   const { error: userInsertError } = await supabase
     .from('users')
     .insert({
@@ -97,7 +97,6 @@ export const createOwnerIfNotExists = async (userId: string, phone: string) => {
       last_login_at: new Date().toISOString(),
     });
 
-  // Ignore conflict — row may already exist
   if (userInsertError && !userInsertError.message.includes('duplicate')) {
     console.warn('users insert warning:', userInsertError.message);
   }

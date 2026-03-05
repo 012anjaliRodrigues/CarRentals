@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Car, Headphones, ArrowLeft } from 'lucide-react';
-import { supabase, createOwnerIfNotExists } from '../supabaseClient';
+import { supabase, createOwnerIfNotExists, ensureDevSession } from '../supabaseClient';
 import { toast } from 'react-hot-toast';
 
 interface OtpScreenProps {
@@ -15,7 +15,6 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
-    // Focus first input on load
     if (inputRefs.current[0]) {
       inputRefs.current[0].focus();
     }
@@ -26,15 +25,12 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
     const newOtp = [...otp];
     newOtp[index] = value.substring(value.length - 1);
     setOtp(newOtp);
-
-    // Auto-focus next input
     if (value && index < 5 && inputRefs.current[index + 1]) {
       inputRefs.current[index + 1]?.focus();
     }
   };
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Handle backspace
     if (e.key === 'Backspace' && !otp[index] && index > 0 && inputRefs.current[index - 1]) {
       inputRefs.current[index - 1]?.focus();
     }
@@ -45,85 +41,64 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
     const fullOtp = otp.join('');
     if (fullOtp.length !== 6) return;
 
+    // Mock OTP check — fixed code 123456
+    if (fullOtp !== '123456') {
+      toast.error('Invalid OTP. Use 123456 to verify.');
+      return;
+    }
+
     const cleanedPhone = phoneNumber.replace(/\D/g, '');
     const fullPhone = `+91${cleanedPhone}`;
 
     try {
       setIsLoading(true);
 
-      // Verify OTP with Supabase
-      const { data, error } = await supabase.auth.verifyOtp({
-        phone: fullPhone,
-        token: fullOtp,
-        type: 'sms',
-      });
-
-      if (error) {
-        console.error('Error verifying OTP:', error);
-        toast.error(error.message || 'Invalid or expired OTP. Please try again.');
-        return;
-      }
-
-      const authUser = data.user;
-      if (!authUser) {
-        toast.error('Could not find authenticated user after OTP verification.');
+      // Each phone number → its own unique Supabase user → own data
+      const userId = await ensureDevSession(cleanedPhone);
+      if (!userId) {
+        toast.error('Login failed. Please try again.');
         return;
       }
 
       // Ensure public.users row exists
-      const { data: existingUser, error: userSelectError } = await supabase
+      const { data: existingUser } = await supabase
         .from('users')
         .select('*')
-        .eq('supabase_user_id', authUser.id)
+        .eq('supabase_user_id', userId)
         .maybeSingle();
-
-      if (userSelectError) {
-        console.error('Error checking app user:', userSelectError);
-        toast.error('Unable to check user profile. Please try again.');
-        return;
-      }
 
       if (!existingUser) {
         const { error: insertError } = await supabase
           .from('users')
           .insert({
-            supabase_user_id: authUser.id,
+            supabase_user_id: userId,
             phone: fullPhone,
             role: 'owner',
             last_login_at: new Date().toISOString(),
           });
-
         if (insertError) {
           console.error('Error creating app user:', insertError);
           toast.error('Unable to create user profile. Please try again.');
           return;
         }
       } else {
-        // Update last_login_at
-        const { error: updateError } = await supabase
+        await supabase
           .from('users')
           .update({ last_login_at: new Date().toISOString() })
           .eq('id', existingUser.id);
-
-        if (updateError) {
-          console.warn('Error updating last_login_at:', updateError);
-        }
       }
 
-      // Ensure owner row exists (or create minimal one)
-      const owner = await createOwnerIfNotExists(authUser.id, fullPhone);
+      // Ensure owner row exists (or fetch existing)
+      const owner = await createOwnerIfNotExists(userId, fullPhone);
 
-      const completed = !!owner?.onboarding_step && !!owner?.onboarding_completed_at;
       const onboardingStep: number | null =
         typeof owner?.onboarding_step === 'number' ? owner.onboarding_step : null;
 
       let nextScreen: 'IDENTITY' | 'GST' | 'LOCATIONS' | 'DASHBOARD';
 
       if (owner?.onboarding_completed_at) {
-        // Fully onboarded
         nextScreen = 'DASHBOARD';
       } else if (!onboardingStep || onboardingStep <= 1) {
-        // Start from step 1
         nextScreen = 'IDENTITY';
       } else if (onboardingStep === 2) {
         nextScreen = 'GST';
@@ -133,15 +108,12 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
         nextScreen = 'DASHBOARD';
       }
 
-      toast.success('Phone verified successfully');
+      toast.success('Verified! Welcome.');
+      onVerify({ nextScreen, owner });
 
-      onVerify({
-        nextScreen,
-        owner,
-      });
     } catch (err) {
       console.error('Unexpected error verifying OTP:', err);
-      toast.error('Something went wrong while verifying OTP.');
+      toast.error('Something went wrong while verifying.');
     } finally {
       setIsLoading(false);
     }
@@ -149,31 +121,31 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
 
   return (
     <div className="min-h-screen bg-[#D3D2EC] flex flex-col items-center justify-center p-4">
-      {/* Verification Card */}
       <div className="bg-white rounded-[2rem] shadow-[0_10px_30px_rgba(0,0,0,0.05)] w-full max-w-[440px] p-10 md:p-12 text-center">
         
-        {/* Logo Icon */}
         <div className="flex justify-center mb-6">
           <div className="w-14 h-14 bg-[#6360DF] rounded-2xl flex items-center justify-center shadow-lg shadow-[#6360df22]">
             <Car className="text-white w-7 h-7" />
           </div>
         </div>
 
-        {/* Heading */}
         <h2 className="text-[26px] font-bold text-[#151a3c] mb-2 tracking-tight">
           Enter verification code
         </h2>
         <p className="text-[#6c7e96] text-[13px] mb-8">
-          We sent a 6-digit code to <span className="font-bold text-[#151a3c]">+91 {phoneNumber || '77775 45453'}</span>
+          We sent a 6-digit code to <span className="font-bold text-[#151a3c]">+91 {phoneNumber}</span>
         </p>
 
+        {/* Mock OTP hint */}
+        <div className="mb-6 bg-[#EEEDFA] border border-[#6360DF]/20 rounded-xl px-4 py-2.5 text-[12px] font-bold text-[#6360DF]">
+          Use <span className="tracking-widest">123456</span> as your OTP
+        </div>
+
         <form onSubmit={handleVerify} className="text-center">
-          {/* OTP Inputs */}
           <div className="flex justify-between gap-2 mb-6">
             {otp.map((digit, idx) => (
               <input
                 key={idx}
-                // Wrapped the assignment in braces to return void and satisfy TS ref requirements
                 ref={(el) => { inputRefs.current[idx] = el; }}
                 type="text"
                 inputMode="numeric"
@@ -186,36 +158,15 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
             ))}
           </div>
 
-          {/* Resend Link */}
-          <button 
-            type="button" 
+          {/* Resend — mock just shows a toast */}
+          <button
+            type="button"
             className="text-[#6360DF] font-bold text-[13px] mb-8 hover:underline"
-            onClick={async () => {
-              const cleaned = phoneNumber.replace(/\D/g, '');
-              if (cleaned.length !== 10) {
-                toast.error('Enter a valid phone number on previous screen.');
-                return;
-              }
-              try {
-                const { error } = await supabase.auth.signInWithOtp({
-                  phone: `+91${cleaned}`,
-                });
-                if (error) {
-                  console.error('Error resending OTP:', error);
-                  toast.error(error.message || 'Failed to resend OTP.');
-                } else {
-                  toast.success('OTP resent successfully');
-                }
-              } catch (err) {
-                console.error('Unexpected error resending OTP:', err);
-                toast.error('Something went wrong while resending OTP.');
-              }
-            }}
+            onClick={() => toast.success('OTP resent! Use 123456 to verify.')}
           >
             Resend OTP
           </button>
 
-          {/* Button */}
           <button
             type="submit"
             disabled={otp.some(d => !d) || isLoading}
@@ -225,13 +176,10 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
           >
             {isLoading ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-            ) : (
-              "Verify & Continue"
-            )}
+            ) : 'Verify & Continue'}
           </button>
 
-          {/* Back Link */}
-          <button 
+          <button
             type="button"
             onClick={onBack}
             className="flex items-center justify-center space-x-2 text-[#6c7e96] text-[13px] font-medium mx-auto hover:text-[#151a3c] transition-colors"
@@ -249,7 +197,6 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
         </div>
       </div>
 
-      {/* Support Link */}
       <div className="mt-8 flex items-center space-x-2 text-[#151a3c] opacity-60 hover:opacity-100 transition-opacity cursor-pointer group">
         <div className="bg-[#151a3c]/10 p-1 rounded-md">
           <Headphones className="w-4 h-4" />
