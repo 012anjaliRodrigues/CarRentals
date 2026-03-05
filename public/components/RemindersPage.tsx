@@ -243,7 +243,8 @@ const handleUpdate = async (id: string, updates: Partial<Pick<ReminderDB, 'type'
   };
 
 
-  
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
 
   return (
     <div className="min-h-full bg-[#D3D2EC] p-10 space-y-10">
@@ -253,6 +254,11 @@ const handleUpdate = async (id: string, updates: Partial<Pick<ReminderDB, 'type'
           <h2 className="text-3xl font-extrabold text-[#151a3c] tracking-tight">Reminders Dashboard</h2>
           <p className="text-[#6c7e96] text-sm font-medium mt-1">Manage vehicle maintenance and document renewals</p>
         </div>
+        <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
+  <Calendar size={16} className="text-[#6c7e96]" />
+  <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+    className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer" />
+</div>
         <button onClick={() => setIsAddModalOpen(true)}
           className="bg-[#6360DF] hover:bg-[#5451d0] text-white font-bold px-8 py-4 rounded-2xl shadow-xl shadow-[#6360df33] transition-all flex items-center space-x-2 group active:scale-95">
           <Plus size={20} className="group-hover:rotate-90 transition-transform" /><span>Add New Reminder</span>

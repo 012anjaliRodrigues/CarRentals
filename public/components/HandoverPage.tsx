@@ -653,6 +653,10 @@ const HandoverPage: React.FC = () => {
   const openPanel = (row: HandoverRow) => { setSelectedRow(row); setIsPanelOpen(true); };
   const closePanel = () => { setIsPanelOpen(false); setSelectedRow(null); };
 
+
+
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
   return (
     <div className="min-h-full space-y-6 pb-10">
 
@@ -669,10 +673,18 @@ const HandoverPage: React.FC = () => {
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full bg-white border border-[#d1d0eb] rounded-full py-2.5 pl-11 pr-4 text-sm font-medium outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] transition-all" />
           </div>
-          <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
+          {/* <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
             <Calendar size={16} className="text-[#6c7e96]" />
             <span>{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
-          </div>
+          </div> */}
+
+<div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
+  <Calendar size={16} className="text-[#6c7e96]" />
+  <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+    className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer" />
+</div>
+
+
         </div>
       </div>
 
