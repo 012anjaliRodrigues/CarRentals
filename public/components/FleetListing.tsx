@@ -473,7 +473,7 @@ const VehicleDetailView: React.FC<{
       </div>
 
       {/* Vehicles table */}
-      <div className="bg-white rounded-[2rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
         {/* Desktop header */}
         <div className="hidden md:grid grid-cols-12 px-10 py-5 text-[11px] font-bold text-[#6c7e96] tracking-widest uppercase border-b border-[#d1d0eb]/30 bg-[#F9F9FF]/50">
           <div className="col-span-3">Vehicle No.</div>

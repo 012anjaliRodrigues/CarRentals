@@ -55,7 +55,6 @@ const AllocationDetailPopup: React.FC<AllocationDetailPopupProps> = ({ row, driv
     return new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
   };
 
-  
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
       <motion.div
@@ -92,7 +91,6 @@ const AllocationDetailPopup: React.FC<AllocationDetailPopupProps> = ({ row, driv
 
         {/* Body */}
         <div className="p-8 space-y-6">
-
           {/* Customer + Vehicle card */}
           <div className="bg-[#f8f7ff] rounded-2xl p-5 border border-[#d1d0eb]/30 space-y-4">
             <div className="flex items-center space-x-3">
@@ -202,7 +200,11 @@ const AllocationPage: React.FC = () => {
   // Popup state
   const [popupRow, setPopupRow] = useState<AllocationRow | null>(null);
 
-  const loadData = async () => {
+  // ── Selective date — defaults to today, wired to DB query ──
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // ── loadData accepts a date and filters bookings by that day ──
+  const loadData = async (date: string) => {
     setLoading(true);
     const authUser = await getCurrentUser();
     if (!authUser) { setLoading(false); return; }
@@ -210,7 +212,9 @@ const AllocationPage: React.FC = () => {
     if (!ownerRow) { setLoading(false); return; }
     setOwnerId(ownerRow.id);
 
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    // Filter: bookings whose pickup_at falls on the selected date
+    const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd   = new Date(date); dayEnd.setHours(23, 59, 59, 999);
 
     const [bookingDetailsRes, allocationsRes, driversRes, vehiclesRes] = await Promise.all([
       supabase
@@ -222,7 +226,8 @@ const AllocationPage: React.FC = () => {
         `)
         .eq('bookings.owner_id', ownerRow.id)
         .in('bookings.status', ['BOOKED', 'ONGOING'])
-        .gte('bookings.pickup_at', todayStart.toISOString()),
+        .gte('bookings.pickup_at', dayStart.toISOString())
+        .lte('bookings.pickup_at', dayEnd.toISOString()),
       supabase
         .from('allocations')
         .select('id, booking_detail_id, driver_id, type, is_confirmed, vehicle_id, vehicles(registration_no), drivers(full_name)')
@@ -233,7 +238,6 @@ const AllocationPage: React.FC = () => {
 
     const allAllocations = (allocationsRes.data as any[]) || [];
 
-    // Map: detailId+type → allocation
     const allocMapPick: Record<string, any> = {};
     const allocMapDrop: Record<string, any> = {};
     allAllocations.forEach((a: any) => {
@@ -260,7 +264,6 @@ const AllocationPage: React.FC = () => {
         dropAt: d.bookings?.drop_at || '',
       };
 
-      // Pick row
       const pickAlloc = allocMapPick[d.id] || null;
       mapped.push({
         ...base,
@@ -274,7 +277,6 @@ const AllocationPage: React.FC = () => {
         allocatedVehicleReg: null,
       });
 
-      // Drop row
       const dropAlloc = allocMapDrop[d.id] || null;
       mapped.push({
         ...base,
@@ -289,18 +291,13 @@ const AllocationPage: React.FC = () => {
       });
     });
 
-    // Sort: most recent booking first, Pick before Drop within same booking
-mapped.sort((a, b) => {
-  const tA = new Date(a.pickupAt).getTime();
-  const tB = new Date(b.pickupAt).getTime();
-  if (tA !== tB) return tB - tA; // most recent first
-  // Same booking → Pick before Drop
-  if (a.bookingId === b.bookingId) {
-    return a.locationType === 'Pick' ? -1 : 1;
-  }
-  return 0;
-});
-
+    mapped.sort((a, b) => {
+      const tA = new Date(a.pickupAt).getTime();
+      const tB = new Date(b.pickupAt).getTime();
+      if (tA !== tB) return tB - tA;
+      if (a.bookingId === b.bookingId) return a.locationType === 'Pick' ? -1 : 1;
+      return 0;
+    });
 
     setRows(mapped);
     setDrivers(((driversRes.data as any[]) || []).map((d: any) => ({ id: d.id, name: d.full_name })));
@@ -311,14 +308,14 @@ mapped.sort((a, b) => {
     setLoading(false);
   };
 
-  useEffect(() => { loadData(); }, []);
+  // Reload whenever selectedDate changes
+  useEffect(() => { loadData(selectedDate); }, [selectedDate]);
 
   const fmtDateTime = (iso: string) => {
     if (!iso) return '—';
     return new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
   };
 
-  // Reallocate: open edit dropdowns for already-allocated row
   const handleReallocate = (row: AllocationRow) => {
     setSelectedDrivers(prev => ({ ...prev, [row.detailId]: row.allocatedDriverId || '' }));
     if (row.locationType === 'Drop') {
@@ -358,7 +355,7 @@ mapped.sort((a, b) => {
         if (error) { toast.error('Failed to save: ' + error.message); return; }
       }
       toast.success(row.isAllocated ? 'Allocation updated!' : 'Driver allocated!');
-      await loadData();
+      await loadData(selectedDate);
       setSelectedDrivers(prev => { const n = { ...prev }; delete n[row.detailId]; return n; });
       setSelectedVehicles(prev => { const n = { ...prev }; delete n[row.detailId]; return n; });
     } catch {
@@ -368,13 +365,12 @@ mapped.sort((a, b) => {
     }
   };
 
-  // Get display vehicle for a Drop row (live-updated from dropdown)
   const getDisplayVehicle = (row: AllocationRow): string => {
     if (row.locationType !== 'Drop') return row.vehicle;
     const selectedVId = selectedVehicles[row.detailId];
     if (selectedVId) {
       const found = availableVehicles.find(v => v.id === selectedVId);
-      return found ? `${found.name} (${found.registration})` : row.vehicle;
+      return found ? found.name : row.vehicle;
     }
     return row.vehicle;
   };
@@ -397,33 +393,37 @@ mapped.sort((a, b) => {
   );
 
   const unallocatedCount = rows.filter(r => !r.isAllocated).length;
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
   return (
     <div className="min-h-full">
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 pb-10">
 
-        {/* Header */}
+        {/* ── Header ── */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h2 className="text-[24px] font-extrabold text-[#151a3c] tracking-tight">Vehicle Allocation</h2>
             <p className="text-[#6c7e96] text-sm font-medium mt-1 opacity-80">Assign drivers to vehicles for upcoming trips</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            {/* Search */}
             <div className="relative group min-w-[200px]">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#cbd5e1] w-4 h-4 group-focus-within:text-[#6360DF] transition-colors" />
               <input type="text" placeholder="Search driver or vehicle..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                 className="w-full bg-white border border-[#d1d0eb] rounded-full py-2.5 pl-11 pr-4 text-sm font-medium outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] transition-all" />
             </div>
-            {/* <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
-              <Calendar size={16} className="text-[#6c7e96]" />
-              <span>{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
-            </div> */}
+
+            {/* Selective date picker — wired to loadData */}
             <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
-  <Calendar size={16} className="text-[#6c7e96]" />
-  <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
-    className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer" />
-</div>
+              <Calendar size={15} className="text-[#6c7e96] shrink-0" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={e => setSelectedDate(e.target.value)}
+                className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]"
+              />
+            </div>
+
+            {/* Unallocated badge */}
             {unallocatedCount > 0 && (
               <div className="flex items-center space-x-2 bg-red-50 border border-red-200 px-4 py-2.5 rounded-xl">
                 <AlertTriangle size={14} className="text-red-500" />
@@ -433,13 +433,14 @@ mapped.sort((a, b) => {
           </div>
         </div>
 
-        {/* Table */}
+        {/* ── Table ── */}
         <div className="bg-white rounded-[2rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-[#F8F9FA]/50 text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase border-b border-[#d1d0eb]/20">
                   <th className="pl-8 py-5">Customer</th>
+                  {/* Vehicle column — reg removed from header too */}
                   <th className="px-4 py-5">Vehicle</th>
                   <th className="px-4 py-5">Type</th>
                   <th className="px-4 py-5">Location Type</th>
@@ -459,7 +460,7 @@ mapped.sort((a, b) => {
                   </td></tr>
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={8} className="py-16 text-center text-[#6c7e96] text-sm font-medium">
-                    {rows.length === 0 ? 'No upcoming bookings to allocate.' : 'No results match your search.'}
+                    {rows.length === 0 ? 'No bookings found for this date.' : 'No results match your search.'}
                   </td></tr>
                 ) : (
                   filtered.map((row, idx) => {
@@ -468,7 +469,6 @@ mapped.sort((a, b) => {
                     const isDrop = row.locationType === 'Drop';
                     const rowTime = isDrop ? row.dropAt : row.pickupAt;
                     const displayVehicle = getDisplayVehicle(row);
-                    const displayReg = getDisplayRegistration(row);
 
                     return (
                       <motion.tr
@@ -477,7 +477,6 @@ mapped.sort((a, b) => {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: idx * 0.03 }}
                         onClick={() => {
-                          // Only open popup if allocated and not in editing mode
                           if (row.isAllocated && !isEditing) setPopupRow(row);
                         }}
                         className={`group transition-colors ${
@@ -488,30 +487,31 @@ mapped.sort((a, b) => {
                             : 'hover:bg-[#F8F9FA]'
                         }`}
                       >
-                        {/* Customer */}
+                        {/* ── Customer — darker text + highlighted location ── */}
                         <td className="py-4 pl-8 whitespace-nowrap">
                           <div className="flex items-center space-x-3">
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-extrabold shrink-0 ${isUnallocated ? 'bg-red-100 text-red-500' : 'bg-[#EEEDFA] text-[#6360DF]'}`}>
                               {row.initials}
                             </div>
                             <div>
-                              <p className="font-bold text-[#151a3c] text-sm">{row.customer}</p>
-                              <div className="flex items-center space-x-1 text-[10px] text-[#6c7e96] font-medium mt-0.5">
-                                <MapPin size={9} className="text-[#6360DF]" />
-                                <span>{isDrop ? row.dropLocation : row.pickupLocation}</span>
+                              {/* Darker, heavier customer name */}
+                              <p className="font-extrabold text-[#0f1535] text-sm tracking-tight">{row.customer}</p>
+                              {/* Highlighted location pill */}
+                              <div className="flex items-center space-x-1 mt-1">
+                                <MapPin size={9} className="text-[#6360DF] shrink-0" />
+                                <span className="text-[10px] font-bold text-[#6360DF] bg-[#EEEDFA] px-2 py-0.5 rounded-full">
+                                  {isDrop ? row.dropLocation : row.pickupLocation}
+                                </span>
                               </div>
                             </div>
                           </div>
                         </td>
 
-                        {/* Vehicle — updates live for Drop */}
+                        {/* ── Vehicle — name only, no registration ── */}
                         <td className="py-4 px-4 whitespace-nowrap">
                           <div className="flex items-center space-x-2">
                             <Car size={13} className="text-[#6360DF] shrink-0" />
-                            <div>
-                              <p className="font-bold text-[#151a3c] text-sm">{displayVehicle.split(' (')[0]}</p>
-                              <p className="text-[10px] text-[#6c7e96] font-medium">{displayReg}</p>
-                            </div>
+                            <p className="font-bold text-[#151a3c] text-sm">{displayVehicle}</p>
                           </div>
                         </td>
 
@@ -568,7 +568,6 @@ mapped.sort((a, b) => {
                                   value={selectedVehicles[row.detailId] ?? (row.allocatedVehicleId || '')}
                                   onChange={e => {
                                     setSelectedVehicles(prev => ({ ...prev, [row.detailId]: e.target.value }));
-                                    // Ensure driver editing mode is also triggered
                                     if (!selectedDrivers[row.detailId]) {
                                       setSelectedDrivers(prev => ({ ...prev, [row.detailId]: row.allocatedDriverId || '' }));
                                     }
@@ -595,7 +594,6 @@ mapped.sort((a, b) => {
                         <td className="py-4 px-6 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-center">
                             {row.isAllocated && !isEditing ? (
-                              // Allocated but not editing — row click opens popup; show subtle indicator
                               <div className="flex items-center space-x-1.5 text-[11px] font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg">
                                 <CheckCircle2 size={11} />
                                 <span>Allocated</span>

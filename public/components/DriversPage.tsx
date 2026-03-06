@@ -17,14 +17,13 @@ interface DriverRow {
   avatarTextColor: string;
   phone: string;
   licenseNo: string;
-  dateTime: string;           // Date & Time from allocation
-  trip: string;               // pickup → drop date range from booking
+  trip: string;
   currentLocation: string;
-  currentBooking: string;     // customer name
+  currentBooking: string;
   locationType: 'Pick' | 'Drop' | null;
-  vehicleReg: string;         // vehicle registration from allocation
+  vehicleReg: string;
   driverStatus: 'On Trip' | 'Allocated' | 'Available' | 'Inactive';
-  dbStatus: string;           // raw DB status: 'active' | 'inactive'
+  dbStatus: string;
   allocationDateTime: string | null;
 }
 
@@ -81,7 +80,7 @@ const getStatusStyle = (s: DriverRow['driverStatus']) => {
   }
 };
 
-// ── DriverProfilePage — UNCHANGED ────────────────────────────
+// ── DriverProfilePage ─────────────────────────────────────────
 const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({ driverId, onBack }) => {
   const [driver, setDriver] = useState<DriverDetail | null>(null);
   const [allocations, setAllocations] = useState<AllocationDetail[]>([]);
@@ -132,9 +131,13 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
 
       setAllocations(((allocData as any[]) || []).map((a: any) => ({
         id: a.id, type: a.type, location: a.location || '—',
-        dateTime: a.date_time ? new Date(a.date_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—',
+        dateTime: a.date_time
+          ? new Date(a.date_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+          : '—',
         customer: a.booking_details?.bookings?.customer_name || '—',
-        vehicle: a.booking_details?.vehicles?.models ? `${a.booking_details.vehicles.models.brand} ${a.booking_details.vehicles.models.name}` : '—',
+        vehicle: a.booking_details?.vehicles?.models
+          ? `${a.booking_details.vehicles.models.brand} ${a.booking_details.vehicles.models.name}`
+          : '—',
         vehicleReg: a.booking_details?.vehicles?.registration_no || '—',
         bookingStatus: a.booking_details?.bookings?.status || '—',
       })));
@@ -154,10 +157,16 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
         .map((a: any) => ({
           id: a.id,
           customer: a.booking_details.bookings.customer_name,
-          vehicle: a.booking_details.vehicles?.models ? `${a.booking_details.vehicles.models.brand} ${a.booking_details.vehicles.models.name}` : '—',
+          vehicle: a.booking_details.vehicles?.models
+            ? `${a.booking_details.vehicles.models.brand} ${a.booking_details.vehicles.models.name}`
+            : '—',
           vehicleReg: a.booking_details.vehicles?.registration_no || '—',
-          pickupDate: a.booking_details.bookings.pickup_at ? new Date(a.booking_details.bookings.pickup_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—',
-          dropDate: a.booking_details.bookings.drop_at ? new Date(a.booking_details.bookings.drop_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—',
+          pickupDate: a.booking_details.bookings.pickup_at
+            ? new Date(a.booking_details.bookings.pickup_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+            : '—',
+          dropDate: a.booking_details.bookings.drop_at
+            ? new Date(a.booking_details.bookings.drop_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+            : '—',
           locationType: a.type,
           bookingStatus: a.booking_details.bookings.status,
         })));
@@ -166,6 +175,11 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
   };
 
   useEffect(() => { loadDriverProfile(selectedDate); }, [driverId, selectedDate]);
+
+  // Computed values (logic kept, Total Trips not displayed)
+  const todaysAllocCount  = allocations.length;
+  const completedTrips    = tripHistory.filter(t => t.bookingStatus === 'COMPLETED').length;
+  const totalTrips        = tripHistory.length; // kept in code, not shown
 
   const bookingStatusBadge = (s: string) => {
     switch (s) {
@@ -179,7 +193,8 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
 
   if (loading && !driver) return (
     <div className="flex items-center justify-center py-32 text-[#6c7e96]">
-      <Loader2 size={24} className="animate-spin mr-2" /><span className="text-sm font-medium">Loading driver profile...</span>
+      <Loader2 size={24} className="animate-spin mr-2" />
+      <span className="text-sm font-medium">Loading driver profile...</span>
     </div>
   );
 
@@ -192,46 +207,73 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
         <span className="text-lg">Back to Drivers</span>
       </button>
 
+      {/* ── Profile banner — stats embedded inside ── */}
       {driver && (
-        <div className="bg-white rounded-[2.5rem] shadow-sm border border-[#d1d0eb]/30 p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="flex items-center space-x-6">
-            <div className="w-20 h-20 rounded-3xl flex items-center justify-center text-2xl font-extrabold shrink-0"
-              style={{ backgroundColor: driver.avatarColor, color: driver.avatarTextColor }}>{driver.initials}</div>
-            <div>
-              <h2 className="text-2xl font-extrabold text-[#151a3c] tracking-tight">{driver.name}</h2>
-              <div className="flex flex-wrap items-center gap-4 mt-2">
-                <div className="flex items-center space-x-1.5 text-sm font-medium text-[#6c7e96]"><Phone size={14} className="text-[#6360DF]" /><span>{driver.phone}</span></div>
-                <div className="flex items-center space-x-1.5 text-sm font-medium text-[#6c7e96]"><CreditCard size={14} className="text-[#6360DF]" /><span>{driver.licenseNo}</span></div>
-                <div className="flex items-center space-x-1.5 text-sm font-medium text-[#6c7e96]"><MapPin size={14} className="text-[#6360DF]" /><span>{driver.location}</span></div>
+        <div className="bg-white rounded-[2.5rem] shadow-sm border border-[#d1d0eb]/30 p-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+
+            {/* Left: avatar + name + contact */}
+            <div className="flex items-center space-x-6">
+              <div
+                className="w-20 h-20 rounded-3xl flex items-center justify-center text-2xl font-extrabold shrink-0"
+                style={{ backgroundColor: driver.avatarColor, color: driver.avatarTextColor }}
+              >
+                {driver.initials}
+              </div>
+              <div className="flex-1 min-w-0">
+                {/* Name + status badge inline */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="text-2xl font-extrabold text-[#151a3c] tracking-tight">{driver.name}</h2>
+                  {statusStyle && (
+                    <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-xs font-extrabold tracking-widest ${statusStyle.bg} ${statusStyle.text}`}>
+                      <div className={`w-2 h-2 rounded-full mr-1.5 ${statusStyle.dot}`} />
+                      {driver.driverStatus.toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-4 mt-2">
+                  <div className="flex items-center space-x-1.5 text-sm font-medium text-[#6c7e96]">
+                    <Phone size={14} className="text-[#6360DF]" /><span>{driver.phone}</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5 text-sm font-medium text-[#6c7e96]">
+                    <CreditCard size={14} className="text-[#6360DF]" /><span>{driver.licenseNo}</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5 text-sm font-medium text-[#6c7e96]">
+                    <MapPin size={14} className="text-[#6360DF]" /><span>{driver.location}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Today's Allocations + Completed Trips — inside the card */}
+            <div className="flex items-center gap-4 shrink-0">
+              {/* Today's Allocations */}
+              <div className="flex flex-col items-center bg-blue-50 rounded-2xl px-6 py-4 min-w-[110px]">
+                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest whitespace-nowrap">Today's</span>
+                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest whitespace-nowrap">Allocations</span>
+                <span className="text-3xl font-black text-blue-600 mt-0.5">{todaysAllocCount}</span>
+
+              </div>
+
+              {/* Divider */}
+              <div className="w-px h-12 bg-[#d1d0eb]/40 hidden sm:block" />
+
+              {/* Completed Trips */}
+              <div className="flex flex-col items-center bg-green-50 rounded-2xl px-6 py-4 min-w-[110px]">
+                <span className="text-[10px] font-bold text-green-400 uppercase tracking-widest whitespace-nowrap">Completed</span>
+                <span className="text-[10px] font-bold text-green-400 uppercase tracking-widest whitespace-nowrap">Trips</span>
+                <span className="text-3xl font-black text-green-600 mt-0.5">{completedTrips}</span>
+
               </div>
             </div>
           </div>
-          {statusStyle && (
-            <div className={`inline-flex items-center px-5 py-2 rounded-full text-sm font-extrabold tracking-widest ${statusStyle.bg} ${statusStyle.text}`}>
-              <div className={`w-2 h-2 rounded-full mr-2 ${statusStyle.dot}`} />
-              {driver.driverStatus.toUpperCase()}
-            </div>
-          )}
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { label: 'Total Trips', value: tripHistory.length.toString(), color: 'text-[#6360DF]', bg: 'bg-[#EEEDFA]' },
-          { label: "Today's Allocations", value: allocations.length.toString(), color: 'text-blue-600', bg: 'bg-blue-50' },
-          { label: 'Completed Trips', value: tripHistory.filter(t => t.bookingStatus === 'COMPLETED').length.toString(), color: 'text-green-600', bg: 'bg-green-50' },
-        ].map((s, i) => (
-          <motion.div key={s.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}
-            className="bg-white rounded-[2rem] p-6 shadow-sm border border-[#d1d0eb]/30 flex items-center justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-[#6c7e96] uppercase tracking-widest">{s.label}</p>
-              <h3 className={`text-3xl font-black mt-1 ${s.color}`}>{s.value}</h3>
-            </div>
-            <div className={`w-12 h-12 rounded-2xl ${s.bg} ${s.color} flex items-center justify-center`}><Car size={20} /></div>
-          </motion.div>
-        ))}
-      </div>
+      {/* ── Stat cards row — hidden, logic kept above ── */}
+      {/* totalTrips is computed but not rendered */}
 
+      {/* ── Daily Allocations ── */}
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
         <div className="px-8 py-6 border-b border-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -267,9 +309,12 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {allocations.map((a, i) => (
-                  <motion.tr key={a.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }} className="hover:bg-[#f8f9fc] transition-colors">
+                  <motion.tr key={a.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }}
+                    className="hover:bg-[#f8f9fc] transition-colors">
                     <td className="py-4 pl-8 whitespace-nowrap">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest ${a.type === 'Pick' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>{a.type.toUpperCase()}</span>
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest ${a.type === 'Pick' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>
+                        {a.type.toUpperCase()}
+                      </span>
                     </td>
                     <td className="py-4 px-4 font-bold text-[#151a3c] text-sm whitespace-nowrap">{a.customer}</td>
                     <td className="py-4 px-4 whitespace-nowrap">
@@ -280,10 +325,14 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
                       <div className="flex items-center space-x-1.5"><MapPin size={11} className="text-[#6360DF]" /><span>{a.location}</span></div>
                     </td>
                     <td className="py-4 px-4 whitespace-nowrap">
-                      <div className="flex items-center space-x-1.5 text-sm font-bold text-[#151a3c]"><Clock size={11} className="text-[#6c7e96]" /><span>{a.dateTime}</span></div>
+                      <div className="flex items-center space-x-1.5 text-sm font-bold text-[#151a3c]">
+                        <Clock size={11} className="text-[#6c7e96]" /><span>{a.dateTime}</span>
+                      </div>
                     </td>
                     <td className="py-4 pr-8 whitespace-nowrap">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest ${bookingStatusBadge(a.bookingStatus)}`}>{a.bookingStatus}</span>
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest ${bookingStatusBadge(a.bookingStatus)}`}>
+                        {a.bookingStatus}
+                      </span>
                     </td>
                   </motion.tr>
                 ))}
@@ -293,6 +342,7 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
         </div>
       </div>
 
+      {/* ── Trip History ── */}
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
         <div className="px-8 py-6 border-b border-slate-50">
           <h3 className="text-lg font-extrabold text-[#151a3c]">Trip History</h3>
@@ -314,7 +364,8 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {tripHistory.map((t, i) => (
-                  <motion.tr key={`${t.id}-${i}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }} className="hover:bg-[#f8f9fc] transition-colors">
+                  <motion.tr key={`${t.id}-${i}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
+                    className="hover:bg-[#f8f9fc] transition-colors">
                     <td className="py-4 pl-8 whitespace-nowrap">
                       <div className="flex items-center space-x-3">
                         <div className="w-8 h-8 rounded-full bg-[#EEEDFA] flex items-center justify-center text-[#6360DF] text-[10px] font-extrabold">
@@ -328,13 +379,19 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
                       <p className="text-[10px] text-[#6c7e96] font-medium">{t.vehicleReg}</p>
                     </td>
                     <td className="py-4 px-4 whitespace-nowrap">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest ${t.locationType === 'Pick' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>{t.locationType.toUpperCase()}</span>
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest ${t.locationType === 'Pick' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>
+                        {t.locationType.toUpperCase()}
+                      </span>
                     </td>
                     <td className="py-4 px-4 whitespace-nowrap">
-                      <div className="flex items-center space-x-1.5 text-xs font-medium text-[#6c7e96]"><Calendar size={11} /><span>{t.pickupDate} → {t.dropDate}</span></div>
+                      <div className="flex items-center space-x-1.5 text-xs font-medium text-[#6c7e96]">
+                        <Calendar size={11} /><span>{t.pickupDate} → {t.dropDate}</span>
+                      </div>
                     </td>
                     <td className="py-4 pr-8 whitespace-nowrap">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest ${bookingStatusBadge(t.bookingStatus)}`}>{t.bookingStatus}</span>
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest ${bookingStatusBadge(t.bookingStatus)}`}>
+                        {t.bookingStatus}
+                      </span>
                     </td>
                   </motion.tr>
                 ))}
@@ -357,12 +414,15 @@ const DriversPage: React.FC = () => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
+  // Selective date — defaults to today
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
   // Filter panel
   const [showFilters, setShowFilters] = useState(false);
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterLocationType, setFilterLocationType] = useState('All');
 
-  const loadDrivers = async () => {
+  const loadDrivers = async (date: string) => {
     setLoading(true);
     const authUser = await getCurrentUser();
     if (!authUser) { setLoading(false); return; }
@@ -376,8 +436,8 @@ const DriversPage: React.FC = () => {
 
     if (error) { toast.error('Failed to load drivers.'); setLoading(false); return; }
 
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
+    const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd   = new Date(date); dayEnd.setHours(23, 59, 59, 999);
 
     const { data: allocations } = await supabase
       .from('allocations')
@@ -389,11 +449,10 @@ const DriversPage: React.FC = () => {
         )
       `)
       .eq('owner_id', ownerRow.id)
-      .gte('date_time', todayStart.toISOString())
-      .lte('date_time', todayEnd.toISOString())
+      .gte('date_time', dayStart.toISOString())
+      .lte('date_time', dayEnd.toISOString())
       .order('date_time', { ascending: true });
 
-    // Build map: driverId → earliest allocation today
     const allocMap: Record<string, {
       customer: string; vehicle: string; type: 'Pick' | 'Drop';
       bookingStatus: string; location: string; dateTime: string;
@@ -417,15 +476,6 @@ const DriversPage: React.FC = () => {
       }
     });
 
-    const fmtDate = (iso: string) => iso
-      ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-      : '—';
-
-    const nowStr = new Date().toLocaleString('en-IN', {
-      day: '2-digit', month: 'short', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', hour12: true,
-    });
-
     const mapped: DriverRow[] = ((drivers as any[]) || []).map((d: any) => {
       const initials = d.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2);
       const colorIdx = d.full_name.charCodeAt(0) % AVATAR_COLORS.length;
@@ -436,20 +486,6 @@ const DriversPage: React.FC = () => {
       if (d.status !== 'active') driverStatus = 'Inactive';
       else if (alloc) driverStatus = alloc.bookingStatus === 'ONGOING' ? 'On Trip' : 'Allocated';
 
-      // Date & Time: allocation datetime formatted with time
-      const dateTime = alloc?.dateTime
-        ? new Date(alloc.dateTime).toLocaleString('en-IN', {
-            day: '2-digit', month: 'short', year: 'numeric',
-            hour: '2-digit', minute: '2-digit', hour12: true,
-          })
-        : nowStr;
-
-      // Trip: pickup → drop date range from the booking
-      // const trip = alloc?.pickupAt && alloc?.dropAt
-      //   ? `${fmtDate(alloc.pickupAt)} → ${fmtDate(alloc.dropAt)}`
-      //   : '—';
-      const trip = '—';
-
       return {
         id: d.id,
         name: d.full_name,
@@ -458,8 +494,7 @@ const DriversPage: React.FC = () => {
         avatarTextColor: color.text,
         phone: d.phone,
         licenseNo: d.license_no,
-        dateTime,
-        trip,
+        trip: '—',
         currentLocation: alloc?.location || d.current_location || 'Not Assigned',
         currentBooking: alloc?.customer || 'Not Assigned',
         locationType: alloc?.type || null,
@@ -482,7 +517,7 @@ const DriversPage: React.FC = () => {
     setLoading(false);
   };
 
-  useEffect(() => { loadDrivers(); }, []);
+  useEffect(() => { loadDrivers(selectedDate); }, [selectedDate]);
 
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from('drivers').delete().eq('id', id);
@@ -498,14 +533,11 @@ const DriversPage: React.FC = () => {
     const { error } = await supabase.from('drivers').update({ status: newStatus }).eq('id', driver.id);
     if (error) { toast.error('Failed to update driver status.'); setTogglingId(null); return; }
     toast.success(`Driver marked ${newStatus === 'active' ? 'Active' : 'Inactive'}.`);
-    await loadDrivers();
+    await loadDrivers(selectedDate);
     setTogglingId(null);
   };
 
-  const activeFilterCount = [
-    filterStatus !== 'All',
-    filterLocationType !== 'All',
-  ].filter(Boolean).length;
+  const activeFilterCount = [filterStatus !== 'All', filterLocationType !== 'All'].filter(Boolean).length;
 
   const filtered = driversData
     .filter(d => filterStatus === 'All' || d.driverStatus === filterStatus)
@@ -515,7 +547,7 @@ const DriversPage: React.FC = () => {
       d.phone.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-  const COL_SPAN = 8;
+  const COL_SPAN = 7;
 
   return (
     <div className="min-h-full">
@@ -524,7 +556,7 @@ const DriversPage: React.FC = () => {
           <DriverProfilePage key="profile" driverId={selectedDriverId} onBack={() => setView('list')} />
         )}
         {view === 'add' && (
-          <AddDriver key="add" onSave={async () => { await loadDrivers(); setView('list'); }} onCancel={() => setView('list')} />
+          <AddDriver key="add" onSave={async () => { await loadDrivers(selectedDate); setView('list'); }} onCancel={() => setView('list')} />
         )}
         {view === 'list' && (
           <motion.div key="list" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
@@ -535,15 +567,26 @@ const DriversPage: React.FC = () => {
                 <h2 className="text-[24px] font-extrabold text-[#151a3c] tracking-tight">Drivers</h2>
                 <p className="text-[#6c7e96] text-sm font-medium mt-1">Manage your fleet of drivers and their assignments</p>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="relative group w-[280px]">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative group w-[260px]">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#cbd5e1] w-4 h-4 group-focus-within:text-[#6360DF] transition-colors" />
                   <input type="text" placeholder="Search drivers..."
                     className="w-full bg-white border border-[#d1d0eb] rounded-full py-2.5 pl-11 pr-4 text-sm font-medium outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] transition-all"
                     value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
                 </div>
 
-                {/* Filter button */}
+                {/* Selective date picker */}
+                <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb]">
+                  <Calendar size={15} className="text-[#6c7e96] shrink-0" />
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={e => setSelectedDate(e.target.value)}
+                    className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]"
+                  />
+                </div>
+
+                {/* Filters */}
                 <button
                   onClick={() => setShowFilters(prev => !prev)}
                   className={`relative flex items-center space-x-2 px-5 py-2.5 rounded-xl border text-sm font-bold transition-all ${
@@ -571,12 +614,7 @@ const DriversPage: React.FC = () => {
             {/* Filter Panel */}
             <AnimatePresence>
               {showFilters && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden"
-                >
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                   <div className="bg-white border border-[#d1d0eb]/50 rounded-2xl p-6 shadow-sm">
                     <div className="flex items-center justify-between mb-5">
                       <div className="flex items-center space-x-2">
@@ -584,58 +622,37 @@ const DriversPage: React.FC = () => {
                         <span className="text-sm font-extrabold text-[#151a3c]">Filter Drivers</span>
                       </div>
                       {activeFilterCount > 0 && (
-                        <button
-                          onClick={() => { setFilterStatus('All'); setFilterLocationType('All'); }}
-                          className="text-[11px] font-bold text-red-500 hover:text-red-700 flex items-center space-x-1 transition-colors"
-                        >
+                        <button onClick={() => { setFilterStatus('All'); setFilterLocationType('All'); }}
+                          className="text-[11px] font-bold text-red-500 hover:text-red-700 flex items-center space-x-1 transition-colors">
                           <X size={12} /><span>Clear All</span>
                         </button>
                       )}
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-
-                      {/* Status filter */}
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-[#6c7e96] uppercase tracking-widest">Driver Status</label>
                         <div className="flex flex-wrap gap-2">
                           {['All', 'On Trip', 'Allocated', 'Available', 'Inactive'].map(s => (
-                            <button
-                              key={s}
-                              onClick={() => setFilterStatus(s)}
+                            <button key={s} onClick={() => setFilterStatus(s)}
                               className={`px-3 py-1.5 rounded-full text-[10px] font-extrabold tracking-wide transition-all ${
-                                filterStatus === s
-                                  ? 'bg-[#6360DF] text-white'
-                                  : 'bg-[#F8F9FA] text-[#6c7e96] hover:bg-[#EEEDFA] hover:text-[#6360DF]'
-                              }`}
-                            >
-                              {s}
-                            </button>
+                                filterStatus === s ? 'bg-[#6360DF] text-white' : 'bg-[#F8F9FA] text-[#6c7e96] hover:bg-[#EEEDFA] hover:text-[#6360DF]'
+                              }`}>{s}</button>
                           ))}
                         </div>
                       </div>
-
-                      {/* Location Type filter */}
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-[#6c7e96] uppercase tracking-widest">Location Type</label>
                         <div className="flex flex-wrap gap-2">
                           {['All', 'Pick', 'Drop', 'None'].map(t => (
-                            <button
-                              key={t}
-                              onClick={() => setFilterLocationType(t)}
+                            <button key={t} onClick={() => setFilterLocationType(t)}
                               className={`px-3 py-1.5 rounded-full text-[10px] font-extrabold tracking-wide transition-all ${
                                 filterLocationType === t
-                                  ? t === 'Pick' ? 'bg-blue-500 text-white'
-                                    : t === 'Drop' ? 'bg-orange-500 text-white'
-                                    : 'bg-[#6360DF] text-white'
+                                  ? t === 'Pick' ? 'bg-blue-500 text-white' : t === 'Drop' ? 'bg-orange-500 text-white' : 'bg-[#6360DF] text-white'
                                   : 'bg-[#F8F9FA] text-[#6c7e96] hover:bg-[#EEEDFA] hover:text-[#6360DF]'
-                              }`}
-                            >
-                              {t}
-                            </button>
+                              }`}>{t}</button>
                           ))}
                         </div>
                       </div>
-
                     </div>
                   </div>
                 </motion.div>
@@ -649,7 +666,6 @@ const DriversPage: React.FC = () => {
                   <thead>
                     <tr className="bg-[#F8F9FA]/50 text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase border-b border-[#d1d0eb]/20">
                       <th className="pl-10 py-5 font-bold">Driver Name</th>
-                      <th className="px-6 py-5 font-bold">Date & Time</th>
                       <th className="px-6 py-5 font-bold">Phone</th>
                       <th className="px-6 py-5 font-bold">Trip</th>
                       <th className="px-6 py-5 font-bold">Booking / Type / Location</th>
@@ -684,30 +700,15 @@ const DriversPage: React.FC = () => {
                               </div>
                             </td>
 
-                            {/* Date & Time */}
-                            <td className="py-5 px-6 whitespace-nowrap">
-                              <div className="flex items-center space-x-1.5 text-xs font-medium text-[#151a3c]">
-                                <Clock size={11} className="text-[#6360DF] shrink-0" />
-                                <span>{driver.dateTime}</span>
-                              </div>
-                            </td>
-
                             {/* Phone */}
                             <td className="py-5 px-6 text-sm font-medium text-[#151a3c] whitespace-nowrap">{driver.phone}</td>
 
                             {/* Trip */}
                             <td className="py-5 px-6 whitespace-nowrap">
-                              {driver.trip === '—' ? (
-                                <span className="text-sm font-medium text-[#6c7e96] italic">—</span>
-                              ) : (
-                                <div className="flex items-center space-x-1.5 text-xs font-medium text-[#6c7e96]">
-                                  <Calendar size={11} className="text-[#6360DF] shrink-0" />
-                                  <span>{driver.trip}</span>
-                                </div>
-                              )}
+                              <span className="text-sm font-medium text-[#6c7e96] italic">—</span>
                             </td>
 
-                            {/* Booking / Type / Location — merged */}
+                            {/* Booking / Type / Location */}
                             <td className="py-5 px-6 whitespace-nowrap">
                               {driver.currentBooking === 'Not Assigned' ? (
                                 <span className="text-sm font-medium text-[#6c7e96] italic">Not Assigned</span>
@@ -740,7 +741,7 @@ const DriversPage: React.FC = () => {
                               )}
                             </td>
 
-                            {/* Enable / Disable toggle */}
+                            {/* Active toggle */}
                             <td className="py-5 px-6 whitespace-nowrap">
                               <div className="flex items-center space-x-2">
                                 {togglingId === driver.id ? (
