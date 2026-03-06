@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Car as CarIcon, Loader2, Search, Calendar } from 'lucide-react';
+import { Car as CarIcon, Loader2, Search, Calendar, Plus, Filter } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { supabase, getCurrentUser } from '../supabaseClient';
+import AddNewVehicle from './AddNewVehicle';
 
+// ── Types ─────────────────────────────────────────────────────
 interface ReminderRow {
   type: string;
   due_date: string;
@@ -22,15 +24,12 @@ interface VehicleRow {
   insuranceUntil: string | null;
   pucUntil: string | null;
   permitUntil: string | null;
-  // booking
   currentBookingCustomer: string | null;
   currentBookingPickup: string | null;
   currentBookingDrop: string | null;
-  // nearest reminder
   nearestReminder: ReminderRow | null;
 }
 
-// Group key: brand + model + transmission + fuel
 interface VehicleGroup {
   key: string;
   brand: string;
@@ -40,6 +39,7 @@ interface VehicleGroup {
   vehicles: VehicleRow[];
 }
 
+// ── Helpers ───────────────────────────────────────────────────
 const getDocAlert = (dateStr: string | null): 'ok' | 'soon' | 'expired' => {
   if (!dateStr) return 'expired';
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -60,10 +60,7 @@ const getNearestReminder = (v: VehicleRow): ReminderRow | null => {
     v.pucUntil       && { type: 'PUC',       due_date: v.pucUntil,       alert: getDocAlert(v.pucUntil) },
     v.permitUntil    && { type: 'Permit',     due_date: v.permitUntil,    alert: getDocAlert(v.permitUntil) },
   ].filter(Boolean) as ReminderRow[];
-
   if (!candidates.length) return null;
-
-  // Prioritise expired > soon > ok, then earliest date
   const priority = { expired: 0, soon: 1, ok: 2 };
   return candidates.sort((a, b) => {
     const pd = priority[a.alert] - priority[b.alert];
@@ -83,12 +80,15 @@ const ReminderText: React.FC<{ reminder: ReminderRow | null }> = ({ reminder }) 
   );
 };
 
+// ── VehiclesPage ──────────────────────────────────────────────
 const VehiclesPage: React.FC = () => {
   const [groups, setGroups] = useState<VehicleGroup[]>([]);
   const [allVehicles, setAllVehicles] = useState<VehicleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [showAddVehicle, setShowAddVehicle] = useState(false);
 
   const loadVehicles = async () => {
     setLoading(true);
@@ -113,10 +113,17 @@ const VehiclesPage: React.FC = () => {
     if (error) { setLoading(false); return; }
 
     const mapped: VehicleRow[] = ((data as any[]) || []).map((v: any) => {
-      // Find active/upcoming booking
+      // Filter bookings active on selectedDate
       const activeBooking = (v.booking_details || [])
         .map((bd: any) => bd.bookings)
-        .filter((b: any) => b && (b.status === 'ONGOING' || b.status === 'BOOKED'))
+        .filter((b: any) => {
+          if (!b) return false;
+          if (!['ONGOING', 'BOOKED'].includes(b.status)) return false;
+          // Check if selectedDate falls within booking range
+          const pickup = b.pickup_at?.split('T')[0];
+          const drop   = b.drop_at?.split('T')[0];
+          return pickup <= selectedDate && drop >= selectedDate;
+        })
         .sort((a: any, b: any) => new Date(a.pickup_at).getTime() - new Date(b.pickup_at).getTime())[0];
 
       const row: VehicleRow = {
@@ -143,7 +150,6 @@ const VehiclesPage: React.FC = () => {
 
     setAllVehicles(mapped);
 
-    // Group by brand + model + transmission + fuel
     const groupMap: Record<string, VehicleGroup> = {};
     mapped.forEach(v => {
       const key = `${v.brand}|${v.model}|${v.transmission}|${v.fuelType}`;
@@ -156,7 +162,7 @@ const VehiclesPage: React.FC = () => {
     setLoading(false);
   };
 
-  useEffect(() => { loadVehicles(); }, []);
+  useEffect(() => { loadVehicles(); }, [selectedDate]);
 
   const getStatusStyle = (s: string) => {
     if (s === 'available')   return { bg: 'bg-green-100 text-green-700',   label: 'Available' };
@@ -166,10 +172,11 @@ const VehiclesPage: React.FC = () => {
   };
 
   const alertCount = allVehicles.filter(v =>
-    getDocAlert(v.insuranceUntil) !== 'ok' || getDocAlert(v.pucUntil) !== 'ok' || getDocAlert(v.permitUntil) !== 'ok'
+    getDocAlert(v.insuranceUntil) !== 'ok' ||
+    getDocAlert(v.pucUntil) !== 'ok' ||
+    getDocAlert(v.permitUntil) !== 'ok'
   ).length;
 
-  // Filter vehicles within groups
   const filteredGroups = groups
     .map(g => ({
       ...g,
@@ -185,9 +192,20 @@ const VehiclesPage: React.FC = () => {
 
   const COL_SPAN = 6;
 
+  // ── Add Vehicle view ─────────────────────────────────────
+  if (showAddVehicle) {
+    return (
+      <AddNewVehicle
+        onSave={async () => { await loadVehicles(); setShowAddVehicle(false); }}
+        onCancel={() => setShowAddVehicle(false)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6 pb-10">
-      {/* Header */}
+
+      {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-[24px] font-extrabold text-[#151a3c] tracking-tight">Vehicles</h2>
@@ -196,13 +214,29 @@ const VehiclesPage: React.FC = () => {
             {alertCount > 0 && <span className="ml-2 text-orange-500 font-bold">· {alertCount} with expiry alerts</span>}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="relative group w-[260px]">
+
+        {/* Controls */}
+        <div className="flex items-center flex-wrap gap-2">
+          {/* Search */}
+          <div className="relative group w-full sm:w-[220px]">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#cbd5e1] w-4 h-4 group-focus-within:text-[#6360DF] transition-colors" />
-            <input type="text" placeholder="Search by reg. no or model..."
+            <input type="text" placeholder="Search reg. no or model..."
               value={search} onChange={e => setSearch(e.target.value)}
               className="w-full bg-white border border-[#d1d0eb] rounded-full py-2.5 pl-11 pr-4 text-sm font-medium outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] transition-all" />
           </div>
+
+          {/* Date picker */}
+          <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
+            <Calendar size={15} className="text-[#6c7e96] shrink-0" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]"
+            />
+          </div>
+
+          {/* Status filter */}
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
             className="appearance-none bg-white border border-[#d1d0eb] rounded-xl py-2.5 px-4 text-xs font-bold text-[#151a3c] outline-none cursor-pointer focus:ring-2 focus:ring-[#6360DF]/10 transition-all">
             <option value="All">All Status</option>
@@ -210,23 +244,33 @@ const VehiclesPage: React.FC = () => {
             <option value="rented">In Use</option>
             <option value="maintenance">Maintenance</option>
           </select>
+
+          {/* New Vehicle button */}
+          <button
+            onClick={() => setShowAddVehicle(true)}
+            className="flex items-center space-x-2 bg-[#6360DF] hover:bg-[#5451d0] text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-[#6360df22] transition-all">
+            <Plus size={16} /><span>New Vehicle</span>
+          </button>
         </div>
       </div>
 
-      {/* Table */}
+      {/* ── Table ── */}
       <div className="bg-white rounded-[2rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left">
+
+            {/* Table header — darker bg */}
             <thead>
-              <tr className="bg-[#F9F9FF]/50 text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase border-b border-[#d1d0eb]/20">
-                <th className="pl-10 py-5 font-bold">Vehicle No.</th>
-                <th className="px-4 py-5 font-bold">Year</th>
-                <th className="px-4 py-5 font-bold">Color</th>
-                <th className="px-4 py-5 font-bold">Status</th>
-                <th className="px-4 py-5 font-bold">Current Booking & Duration</th>
-                <th className="px-4 py-5 pr-10 font-bold">Reminder</th>
+              <tr className="bg-[#d6d5df] text-[10px] font-bold text-[#4a4870] tracking-widest uppercase border-b border-[#cccbe8]">
+                <th className="pl-8 py-4 font-bold">Vehicle No.</th>
+                <th className="px-4 py-4 font-bold">Year</th>
+                <th className="px-4 py-4 font-bold">Color</th>
+                <th className="px-4 py-4 font-bold">Status</th>
+                <th className="px-4 py-4 font-bold">Current Booking & Duration</th>
+                <th className="px-4 py-4 pr-8 font-bold">Reminder</th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-[#d1d0eb]/10">
               {loading ? (
                 <tr><td colSpan={COL_SPAN} className="py-16 text-center">
@@ -242,19 +286,21 @@ const VehiclesPage: React.FC = () => {
               ) : (
                 filteredGroups.map((group, gi) => (
                   <React.Fragment key={group.key}>
-                    {/* ── Group header row ── */}
-                    <tr className="bg-[#DDDCF5] border-t border-b border-[#b8b6e0]">
-                      <td colSpan={COL_SPAN} className="py-3 pl-10 pr-6">
-                        <div className="flex items-center gap-3">
-                          <CarIcon size={14} className="text-[#6360DF] shrink-0" />
-                          <span className="font-extrabold text-[#151a3c] text-[14px] tracking-tight">
+
+                    {/* ── Group header — gray, lighter than thead ── */}
+                    <tr className="bg-[#F4F4F8] border-t border-b border-[#dddce8]">
+                      <td colSpan={COL_SPAN} className="py-2.5 pl-8 pr-6">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <CarIcon size={13} className="text-[#6c7e96] shrink-0" />
+                          {/* Brand + model — larger, darker */}
+                          <span className="font-extrabold text-[#2a2850] text-[15px] tracking-tight">
                             {group.brand} {group.model}
                           </span>
-                          <span className="text-[#a8a6d8]">·</span>
-                          <span className="text-[12px] font-bold text-[#2a285e]">{group.transmission}</span>
-                          <span className="text-[#a8a6d8]">·</span>
-                          <span className="text-[12px] font-bold text-[#2a285e]">{group.fuelType}</span>
-                          <span className="text-[#a8a6d8]">·</span>
+                          <span className="text-[#b0afc8]">·</span>
+                          <span className="text-[13px] font-bold text-[#4a4870]">{group.transmission}</span>
+                          <span className="text-[#b0afc8]">·</span>
+                          <span className="text-[13px] font-bold text-[#4a4870]">{group.fuelType}</span>
+                          <span className="text-[#b0afc8]">·</span>
                           <span className="text-[13px] font-bold text-[#6360DF]">
                             {group.vehicles.filter(v => v.status === 'available').length}/{group.vehicles.length} Available
                           </span>
@@ -272,51 +318,51 @@ const VehiclesPage: React.FC = () => {
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           transition={{ delay: (gi + vi) * 0.02 }}
-                          className={`group transition-colors ${hasAlert ? 'hover:bg-orange-50/30' : 'hover:bg-[#F8F9FA]'}`}
+                          className={`transition-colors ${hasAlert ? 'hover:bg-orange-50/30' : 'hover:bg-[#F8F9FA]'}`}
                         >
                           {/* Vehicle No. */}
-                          <td className="py-2.5 pl-10 whitespace-nowrap">
-                            <span className="font-bold text-[#151a3c] text-sm">{v.registrationNo}</span>
+                          <td className="py-2 pl-8 whitespace-nowrap">
+                            <span className="font-bold text-[#151a3c] text-[14px]">{v.registrationNo}</span>
                           </td>
 
                           {/* Year */}
-                          <td className="py-2.5 px-4 text-sm font-medium text-[#6c7e96] whitespace-nowrap">
-                            {v.year || '—'}
+                          <td className="py-2 px-4 whitespace-nowrap">
+                            <span className="text-[13px] font-semibold text-[#4a4870]">{v.year || '—'}</span>
                           </td>
 
                           {/* Color */}
-                          <td className="py-2.5 px-4 whitespace-nowrap">
+                          <td className="py-2 px-4 whitespace-nowrap">
                             <div className="flex items-center space-x-2">
                               <div className="w-3 h-3 rounded-full border border-slate-200 shrink-0"
                                 style={{ backgroundColor: v.color?.toLowerCase() || '#ccc' }} />
-                              <span className="text-sm font-medium text-[#6c7e96] capitalize">{v.color}</span>
+                              <span className="text-[13px] font-semibold text-[#4a4870] capitalize">{v.color}</span>
                             </div>
                           </td>
 
                           {/* Status */}
-                          <td className="py-2.5 px-4 whitespace-nowrap">
+                          <td className="py-2 px-4 whitespace-nowrap">
                             <span className={`px-3 py-1.5 rounded-full text-[10px] font-extrabold tracking-widest ${ss.bg}`}>
                               {ss.label}
                             </span>
                           </td>
 
                           {/* Current Booking & Duration */}
-                          <td className="py-2.5 px-4 whitespace-nowrap">
+                          <td className="py-2 px-4 whitespace-nowrap">
                             {v.currentBookingCustomer ? (
                               <div>
-                                <p className="text-sm font-bold text-[#151a3c]">{v.currentBookingCustomer}</p>
+                                <p className="text-[14px] font-bold text-[#151a3c]">{v.currentBookingCustomer}</p>
                                 <div className="flex items-center space-x-1.5 mt-0.5 text-[11px] font-medium text-[#6c7e96]">
                                   <Calendar size={10} className="text-[#6360DF]" />
                                   <span>{fmtDate(v.currentBookingPickup)} → {fmtDate(v.currentBookingDrop)}</span>
                                 </div>
                               </div>
                             ) : (
-                              <span className="text-sm font-medium text-[#6c7e96] italic">No active booking</span>
+                              <span className="text-[13px] font-medium text-[#6c7e96] italic">No active booking</span>
                             )}
                           </td>
 
-                          {/* Nearest Reminder only */}
-                          <td className="py-2.5 px-4 pr-10 whitespace-nowrap">
+                          {/* Nearest Reminder */}
+                          <td className="py-2 px-4 pr-8 whitespace-nowrap">
                             <ReminderText reminder={v.nearestReminder} />
                           </td>
                         </motion.tr>

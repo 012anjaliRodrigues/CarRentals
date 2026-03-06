@@ -18,6 +18,7 @@ import RemindersPage from './RemindersPage';
 import HandoverPage from './HandoverPage';
 import { ClipboardList } from 'lucide-react';
 import VehiclesPage from './VehiclesPage';
+import UsersPage from './Userspage';
 
 const StatCard: React.FC<{
   title: string; value: string; icon: React.ReactElement;
@@ -135,6 +136,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
     { icon: <Bell />, label: 'Reminders' },
     { icon: <ClipboardList />, label: 'Handover' },
     { icon: <Settings />, label: 'Settings' },
+    { icon: <Users />, label: 'Users' },
   ];
 
   const loadDashboardData = async () => {
@@ -666,6 +668,9 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
               <motion.div key="handover" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
               <HandoverPage />
               </motion.div>
+            )}
+             {activeTab === 'Users' && (
+              <motion.div key="users" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}><UsersPage /></motion.div>
             )}
             {!['Dashboard','Fleet Listing','Vehicles','Bookings','Drivers','Allocation','Reminders','Handover'].includes(activeTab) && (
               <motion.div key="coming-soon" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.3 }}
