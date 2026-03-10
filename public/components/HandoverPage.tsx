@@ -21,6 +21,7 @@ interface HandoverRow {
   brand: string;
   model: string;
   driverName: string;
+  driverPhone: string;
   customerName: string;
   customerPhone: string;
   pickupAt: string;
@@ -96,6 +97,7 @@ const PhotoUploadBox: React.FC<{
   );
 };
 
+// OTP component — kept in code, not rendered anywhere (commented out at all usage sites)
 const OtpPlaceholder: React.FC<{ phone: string; label: string }> = ({ phone, label }) => (
   <div className="bg-[#f8f7ff] border border-[#d1d0eb]/60 rounded-2xl p-4 space-y-3">
     <div className="flex items-center justify-between">
@@ -134,10 +136,10 @@ const KycFields: React.FC<{ kycData: KycData; setKycData: React.Dispatch<React.S
       {kycData.idType !== 'None' && (
         <>
           {[
-            { label: 'ID Number',    key: 'idNumber', ph: 'XXXX XXXX XXXX' },
-            { label: 'Full Name',    key: 'fullName', ph: 'As on document' },
-            { label: 'Date of Birth',key: 'dob',      ph: 'DD / MM / YYYY' },
-            { label: 'Address',      key: 'address',  ph: 'As on document' },
+            { label: 'ID Number',     key: 'idNumber', ph: 'XXXX XXXX XXXX' },
+            { label: 'Full Name',     key: 'fullName', ph: 'As on document' },
+            { label: 'Date of Birth', key: 'dob',      ph: 'DD / MM / YYYY' },
+            { label: 'Address',       key: 'address',  ph: 'As on document' },
           ].map(f => (
             <div key={f.key} className="space-y-1.5">
               <p className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider">{f.label}</p>
@@ -176,7 +178,8 @@ const StepBar: React.FC<{ steps: string[]; current: number; color: string; onBac
   </div>
 );
 
-// ── Drop Panel ────────────────────────────────────────────────
+// ── Drop Panel ─────────────────────────────────────────────────────────────────
+// Drop = Blue theme — 4 steps. Step 4 OTP commented out.
 const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, onClose }) => {
   const [step, setStep] = useState(1);
   const [kycPhoto, setKycPhoto] = useState<string | null>(null);
@@ -185,16 +188,13 @@ const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
   const [photos, setPhotos] = useState<Record<string, string | null>>({ front: null, rear: null, left: null, right: null });
   const [submitting, setSubmitting] = useState(false);
 
-  // const handleKycScan = async (file: File, preview: string) => {
-  //   setKycPhoto(preview);
-  //   setKycScanning(true);
+  // const handleKycScanSimple = async (file: File, preview: string) => {
+  //   setKycPhoto(preview); setKycScanning(true);
   //   await new Promise(r => setTimeout(r, 1800));
-  //   // Placeholder — real impl sends to Claude API vision
   //   setKycData(p => ({ ...p, idType: 'Aadhaar Card', fullName: row.customerName }));
   //   setKycScanning(false);
   //   toast.success('ID scanned — please verify & complete details');
   // };
-
 
   const handleKycScan = async (file: File, preview: string) => {
     setKycPhoto(preview);
@@ -228,16 +228,6 @@ const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
     setKycScanning(false);
   };
 
-
-
-
-  
-
-
-
-
-
-
   const handleSubmit = async () => {
     setSubmitting(true);
     await new Promise(r => setTimeout(r, 1000));
@@ -250,11 +240,7 @@ const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
 
   return (
     <>
-      <StepBar
-        steps={['Allocation', 'ID Proof', 'Vehicle Photos', 'Confirm']}
-        current={step} color="bg-[#6360DF]"
-        onBack={n => setStep(n)}
-      />
+      <StepBar steps={['Allocation', 'ID Proof', 'Vehicle Photos', 'Confirm']} current={step} color="bg-[#6360DF]" onBack={n => setStep(n)} />
       <div className="flex-1 overflow-y-auto px-8 pb-8 space-y-5">
 
         {/* Step 1 — Allocation */}
@@ -271,12 +257,12 @@ const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
               </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-3 pt-3 border-t border-[#d1d0eb]/30">
                 {[
-                  { l: 'Customer',   v: row.customerName },
-                  { l: 'Phone',      v: row.customerPhone },
-                  { l: 'Driver',     v: row.driverName },
-                  { l: 'Location',   v: row.location },
-                  { l: 'Drop Date',  v: row.dropAt ? fmtDate(row.dropAt) : '—' },
-                  { l: 'Date & Time',v: fmtDateTime(row.dateTime) },
+                  { l: 'Customer',    v: row.customerName },
+                  { l: 'Phone',       v: row.customerPhone },
+                  { l: 'Driver',      v: row.driverName },
+                  { l: 'Location',    v: row.location },
+                  { l: 'Drop Date',   v: row.dropAt ? fmtDate(row.dropAt) : '—' },
+                  { l: 'Date & Time', v: fmtDateTime(row.dateTime) },
                 ].map(item => (
                   <div key={item.l}>
                     <p className="text-[9px] font-bold text-[#6c7e96] uppercase tracking-widest">{item.l}</p>
@@ -295,10 +281,7 @@ const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
         {/* Step 2 — KYC */}
         {step === 2 && (
           <motion.div key="drop-2" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
-            <div className="flex items-center justify-between">
-              <SectionLabel>Customer ID Proof</SectionLabel>
-              <span className="text-[9px] font-extrabold text-[#6c7e96] bg-white border border-[#d1d0eb] px-2.5 py-1 rounded-full tracking-widest"></span>
-            </div>
+            <SectionLabel>Customer ID Proof</SectionLabel>
             <PhotoUploadBox label="Take / Upload ID Photo" preview={kycPhoto} onChange={handleKycScan}
               icon={<ScanLine size={16} />} hint="Details auto-filled from photo via AI" />
             {kycScanning && (
@@ -347,16 +330,20 @@ const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
           </motion.div>
         )}
 
-        {/* Step 4 — OTP Confirm */}
+        {/* Step 4 — Confirm (OTP removed from UI — OtpPlaceholder component kept above) */}
         {step === 4 && (
           <motion.div key="drop-4" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
             <SectionLabel>Confirm Drop-Off</SectionLabel>
             <div className="bg-[#f8f7ff] rounded-2xl p-4 border border-[#d1d0eb]/40 space-y-2.5">
               {[
-                { l: 'Vehicle',  v: `${row.registrationNo} · ${row.brand} ${row.model}` },
-                { l: 'Customer', v: row.customerName },
-                { l: 'ID Type',  v: kycData.idType },
-                { l: 'Photos',   v: `${photosUploaded}/4 uploaded` },
+                { l: 'Vehicle',     v: `${row.registrationNo} · ${row.brand} ${row.model}` },
+                { l: 'Customer',    v: row.customerName },
+                { l: 'Phone',       v: row.customerPhone },
+                { l: 'Driver',      v: row.driverName },
+                { l: 'Location',    v: row.location },
+                { l: 'Drop Date',   v: row.dropAt ? fmtDate(row.dropAt) : '—' },
+                { l: 'ID Type',     v: kycData.idType },
+                { l: 'Photos',      v: `${photosUploaded}/4 uploaded` },
               ].map(s => (
                 <div key={s.l} className="flex items-center justify-between text-sm">
                   <span className="text-[#6c7e96] font-medium">{s.l}</span>
@@ -364,7 +351,9 @@ const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
                 </div>
               ))}
             </div>
-            <OtpPlaceholder phone={row.customerPhone} label="" />
+
+            {/* OTP hidden — kept in code: <OtpPlaceholder phone={row.customerPhone} label="" /> */}
+
             <div className="flex space-x-3 pt-1">
               <button onClick={() => setStep(3)} className="flex-1 border border-[#d1d0eb] text-[#6c7e96] font-bold py-3.5 rounded-xl hover:bg-slate-50 text-sm transition-all">Back</button>
               <button onClick={handleSubmit} disabled={submitting}
@@ -380,14 +369,22 @@ const DropPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
   );
 };
 
-// ── Pick Panel ────────────────────────────────────────────────
+// ── Pick Panel ─────────────────────────────────────────────────────────────────
+// Pick = Orange theme — 3 steps (old Step 4 removed).
+// Step 3 = Return ID + Yes/No ID confirm → shows full summary after confirming.
+// AI Damage Detection commented out (code kept). OTP commented out (code kept).
 const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, onClose }) => {
   const [step, setStep] = useState(1);
   const [returnPhotos, setReturnPhotos] = useState<Record<string, string | null>>({ front: null, rear: null, left: null, right: null });
+
+  // AI Damage state — kept in code, not used in UI
   const [damageState, setDamageState] = useState<{ analysing: boolean; done: boolean; result: string }>({ analysing: false, done: false, result: '' });
+
   const [kycPhoto, setKycPhoto] = useState<string | null>(null);
   const [kycScanning, setKycScanning] = useState(false);
   const [kycData, setKycData] = useState<KycData>({ idType: 'None', idNumber: '', fullName: '', dob: '', address: '' });
+  const [idConfirmed, setIdConfirmed] = useState<boolean | null>(null); // null = unanswered
+  const [showSummary, setShowSummary] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const returnCount = Object.values(returnPhotos).filter(Boolean).length;
@@ -401,21 +398,12 @@ const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
     toast.success('ID scanned — please verify & complete details');
   };
 
-
-
-
-
-
-
+  // AI damage check — kept in code, not called from UI
   const runDamageCheck = async () => {
     if (returnCount === 0) { toast.error('Upload at least one return photo first.'); return; }
     setDamageState({ analysing: true, done: false, result: '' });
-    // Placeholder — real impl sends both drop & return photos to Claude API vision
     await new Promise(r => setTimeout(r, 2500));
-    setDamageState({
-      analysing: false, done: true,
-      result: 'No new damage detected. Vehicle appears to be in the same condition as at drop-off.',
-    });
+    setDamageState({ analysing: false, done: true, result: 'No new damage detected. Vehicle appears to be in the same condition as at drop-off.' });
     toast.success('AI damage analysis complete');
   };
 
@@ -427,12 +415,18 @@ const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
     onClose();
   };
 
+  const handleIdConfirm = (answer: boolean) => {
+    setIdConfirmed(answer);
+    setShowSummary(true);
+  };
+
   return (
     <>
+      {/* 3 steps for Pick */}
       <StepBar
-        steps={['Allocation', 'Return Photos', 'Return ID', 'Confirm']}
-        current={step} color="bg-orange-500"
-        onBack={n => setStep(n)}
+        steps={['Allocation', 'Return Photos', 'Return ID']}
+        current={step} color="bg-[#6360DF]"
+        onBack={n => { setStep(n); setShowSummary(false); setIdConfirmed(null); }}
       />
       <div className="flex-1 overflow-y-auto px-8 pb-8 space-y-5">
 
@@ -440,9 +434,9 @@ const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
         {step === 1 && (
           <motion.div key="pick-1" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
             <SectionLabel>Return Allocation</SectionLabel>
-            <div className="bg-[#fff8f0] rounded-2xl p-5 border border-orange-100 space-y-4">
+            <div className="bg-[#f8f7ff] rounded-2xl p-5 border border-gray-100 space-y-4">
               <div className="flex items-center space-x-3">
-                <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-orange-500"><Car size={22} /></div>
+                <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center text-[#6360DF]"><Car size={22} /></div>
                 <div>
                   <p className="font-extrabold text-[#151a3c] text-base">{row.registrationNo}</p>
                   <p className="text-xs text-[#6c7e96] font-medium">{row.brand} {row.model}</p>
@@ -465,18 +459,18 @@ const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
               </div>
             </div>
             <button onClick={() => setStep(2)}
-              className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 rounded-xl flex items-center justify-center space-x-2 shadow-lg shadow-orange-200 transition-all">
+              className="w-full bg-[#6360DF] hover:bg-[#6360DF] text-white font-bold py-4 rounded-xl flex items-center justify-center space-x-2  transition-all">
               <span>Continue to Return Photos</span><ArrowRight size={15} />
             </button>
           </motion.div>
         )}
 
-        {/* Step 2 — Return Photos + AI */}
+        {/* Step 2 — Return Photos (AI Damage Detection hidden) */}
         {step === 2 && (
           <motion.div key="pick-2" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
             <div>
               <SectionLabel>Return Vehicle Photos</SectionLabel>
-              <p className="text-[11px] text-[#6c7e96] font-medium">Compared to drop-off photos via AI to detect any new damage.</p>
+              <p className="text-[11px] text-[#6c7e96] font-medium">Upload photos of the vehicle on return.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {(['front','rear','left','right'] as const).map(side => (
@@ -485,8 +479,12 @@ const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
                   onChange={(_, prev) => setReturnPhotos(p => ({ ...p, [side]: prev }))} />
               ))}
             </div>
+            <div className="flex items-center justify-between text-xs font-medium text-[#6c7e96] bg-[#f8f7ff] rounded-xl px-4 py-2.5 border border-[#d1d0eb]/40">
+              <span>{returnCount}/4 photos uploaded</span>
+              {returnCount === 4 && <span className="text-green-600 font-bold flex items-center space-x-1"><CheckCircle2 size={12} /><span>All sides covered</span></span>}
+            </div>
 
-            {/* AI Damage Detection */}
+            {/* ── AI Damage Detection — hidden from UI, code kept below ──
             <div className="bg-[#f8f7ff] border border-[#d1d0eb]/50 rounded-2xl p-4 space-y-3">
               <div className="flex items-center space-x-2">
                 <Zap size={14} className="text-[#6360DF]" />
@@ -494,7 +492,6 @@ const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
                 <span className="text-[9px] font-extrabold text-[#6c7e96] bg-[#EEEDFA] px-2 py-0.5 rounded-full tracking-widest">BETA</span>
               </div>
               <p className="text-[11px] text-[#6c7e96] font-medium">Compares return photos against drop-off photos to flag new dents, scratches or damage.</p>
-
               {damageState.analysing && (
                 <div className="flex items-center space-x-2 text-[#6360DF] text-sm font-bold">
                   <Loader2 size={13} className="animate-spin" /><span>Analysing photos with AI...</span>
@@ -513,18 +510,19 @@ const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
                   : <><Zap size={12} /><span>{damageState.done ? 'Re-run AI Check' : 'Run AI Damage Check'}</span></>}
               </button>
             </div>
+            ── end AI Damage Detection ── */}
 
             <div className="flex space-x-3 pt-1">
               <button onClick={() => setStep(1)} className="flex-1 border border-[#d1d0eb] text-[#6c7e96] font-bold py-3.5 rounded-xl hover:bg-slate-50 text-sm transition-all">Back</button>
-              <button onClick={() => setStep(3)} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-3.5 rounded-xl flex items-center justify-center space-x-2 text-sm shadow-lg shadow-orange-100 transition-all">
+              <button onClick={() => setStep(3)} className="flex-1 bg-[#6360DF] hover:bg-[#6360DF] text-white font-bold py-3.5 rounded-xl flex items-center justify-center space-x-2 text-sm  transition-all">
                 <span>Continue</span><ArrowRight size={14} />
               </button>
             </div>
           </motion.div>
         )}
 
-        {/* Step 3 — Return ID */}
-        {step === 3 && (
+        {/* Step 3a — Return ID + Yes/No confirm */}
+        {step === 3 && !showSummary && (
           <motion.div key="pick-3" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
             <SectionLabel>Return ID Proof</SectionLabel>
             <PhotoUploadBox label="Scan Return ID Document" preview={kycPhoto} onChange={handleKycScan}
@@ -535,38 +533,73 @@ const PickPanel: React.FC<{ row: HandoverRow; onClose: () => void }> = ({ row, o
               </div>
             )}
             <KycFields kycData={kycData} setKycData={setKycData} />
-            <div className="flex space-x-3 pt-1">
-              <button onClick={() => setStep(2)} className="flex-1 border border-[#d1d0eb] text-[#6c7e96] font-bold py-3.5 rounded-xl hover:bg-slate-50 text-sm transition-all">Back</button>
-              <button onClick={() => setStep(4)} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-3.5 rounded-xl flex items-center justify-center space-x-2 text-sm shadow-lg shadow-orange-100 transition-all">
-                <span>Continue</span><ArrowRight size={14} />
-              </button>
+
+            {/* Yes / No — ID returned? */}
+            <div className="bg-[#f8f7ff] border border-[#f8f7ff] rounded-2xl p-4 space-y-3">
+              <p className="text-sm font-bold text-[#151a3c]">Has the customer returned their ID document?</p>
+              <div className="flex space-x-3">
+                <button onClick={() => handleIdConfirm(true)}
+                  className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all flex items-center justify-center space-x-2 ${
+                    idConfirmed === true
+                      ? 'bg-green-500 border-green-500 text-white'
+                      : 'bg-white border-[#d1d0eb] text-[#151a3c] hover:border-green-400 hover:text-green-600'
+                  }`}>
+                  <Check size={14} /><span>Yes</span>
+                </button>
+                <button onClick={() => handleIdConfirm(false)}
+                  className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 transition-all flex items-center justify-center space-x-2 ${
+                    idConfirmed === false
+                      ? 'bg-orange-500 border-orange-500 text-white'
+                      : 'bg-white border-[#d1d0eb] text-[#151a3c] hover:border-orange-400 hover:text-orange-600'
+                  }`}>
+                  <X size={14} /><span>No</span>
+                </button>
+              </div>
             </div>
+
+            {/* OTP hidden — kept in code: <OtpPlaceholder phone={row.customerPhone} label="Return Confirmation OTP / Survey SMS" /> */}
+
+            <button onClick={() => setStep(2)} className="w-full border border-[#d1d0eb] text-[#6c7e96] font-bold py-3.5 rounded-xl hover:bg-slate-50 text-sm transition-all">Back</button>
           </motion.div>
         )}
 
-        {/* Step 4 — Confirm + OTP */}
-        {step === 4 && (
-          <motion.div key="pick-4" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-5">
-            <SectionLabel>Confirm Return & Send Survey</SectionLabel>
-            <div className="bg-[#fff8f0] rounded-2xl p-4 border border-orange-100 space-y-2.5">
+        {/* Step 3b — Full summary after Yes/No answered */}
+        {step === 3 && showSummary && (
+          <motion.div key="pick-3-summary" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+            <div className="flex items-center space-x-2 mb-1">
+              <CheckCircle2 size={15} className="text-green-500" />
+              <SectionLabel>Return Summary</SectionLabel>
+            </div>
+            <div className="bg-[#f8f7ff] rounded-2xl p-4 border border-gray-100 space-y-2.5">
               {[
                 { l: 'Vehicle',       v: `${row.registrationNo} · ${row.brand} ${row.model}` },
                 { l: 'Customer',      v: row.customerName },
+                { l: 'Phone',         v: row.customerPhone },
+                { l: 'Driver',        v: row.driverName },
+                { l: 'Location',      v: row.location },
+                { l: 'Pickup Date',   v: row.pickupAt ? fmtDate(row.pickupAt) : '—' },
                 { l: 'Return Photos', v: `${returnCount}/4 uploaded` },
-                { l: 'AI Check',      v: damageState.done ? '✓ Complete' : 'Not run' },
-                { l: 'Return ID',     v: kycData.idType },
+                { l: 'Return ID',     v: kycData.idType !== 'None' ? kycData.idType : 'Not scanned' },
+                { l: 'ID Returned',   v: idConfirmed === true ? '✓ Yes' : '✗ No' },
               ].map(s => (
                 <div key={s.l} className="flex items-center justify-between text-sm">
                   <span className="text-[#6c7e96] font-medium">{s.l}</span>
-                  <span className="font-bold text-[#151a3c]">{s.v}</span>
+                  <span className={`font-bold ${
+                    s.l === 'ID Returned' && idConfirmed === true  ? 'text-green-600'
+                    : s.l === 'ID Returned' && idConfirmed === false ? 'text-orange-500'
+                    : 'text-[#151a3c]'
+                  }`}>{s.v}</span>
                 </div>
               ))}
             </div>
-            <OtpPlaceholder phone={row.customerPhone} label="Return Confirmation OTP / Survey SMS" />
+
+            {/* OTP hidden — kept in code: <OtpPlaceholder phone={row.customerPhone} label="Return Confirmation OTP / Survey SMS" /> */}
+
             <div className="flex space-x-3 pt-1">
-              <button onClick={() => setStep(3)} className="flex-1 border border-[#d1d0eb] text-[#6c7e96] font-bold py-3.5 rounded-xl hover:bg-slate-50 text-sm transition-all">Back</button>
+              <button onClick={() => { setShowSummary(false); setIdConfirmed(null); }}
+                className="flex-1 border border-[#d1d0eb] text-[#6c7e96] font-bold py-3.5 rounded-xl hover:bg-slate-50 text-sm transition-all">Back</button>
               <button onClick={handleSubmit} disabled={submitting}
-                className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white font-bold py-3.5 rounded-xl flex items-center justify-center space-x-2 text-sm shadow-lg shadow-orange-100 transition-all">
+                className="flex-1 bg-[#6360DF]  hover:bg-[#6360DF]  disabled:opacity-60 text-white font-bold py-3.5 rounded-xl flex items-center justify-center space-x-2 text-sm  transition-all">
                 {submitting ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
                 <span>{submitting ? 'Saving...' : 'Complete Return'}</span>
               </button>
@@ -587,18 +620,24 @@ const HandoverPage: React.FC = () => {
   const [selectedRow, setSelectedRow] = useState<HandoverRow | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
 
-  const loadHandovers = async () => {
+  // Selective date — wired to DB
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const loadHandovers = async (date: string) => {
     setLoading(true);
     const authUser = await getCurrentUser();
     if (!authUser) { setLoading(false); return; }
     const { data: ownerRow } = await supabase.from('owners').select('id').eq('user_id', authUser.id).single();
     if (!ownerRow) { setLoading(false); return; }
 
+    const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd   = new Date(date); dayEnd.setHours(23, 59, 59, 999);
+
     const { data, error } = await supabase
       .from('allocations')
       .select(`
         id, type, location, date_time,
-        drivers ( full_name ),
+        drivers ( full_name, phone ),
         booking_details (
           id,
           vehicles ( registration_no, models ( brand, name ) ),
@@ -606,6 +645,8 @@ const HandoverPage: React.FC = () => {
         )
       `)
       .eq('owner_id', ownerRow.id)
+      .gte('date_time', dayStart.toISOString())
+      .lte('date_time', dayEnd.toISOString())
       .order('date_time', { ascending: false });
 
     if (error) { setLoading(false); return; }
@@ -613,19 +654,20 @@ const HandoverPage: React.FC = () => {
     const mapped: HandoverRow[] = ((data as any[]) || [])
       .filter((a: any) => a.booking_details?.bookings)
       .map((a: any) => ({
-        id: a.id,
-        type: a.type as HandoverType,
-        dateTime: a.date_time,
-        location: a.location || '—',
-        registrationNo: a.booking_details?.vehicles?.registration_no || '—',
-        brand: a.booking_details?.vehicles?.models?.brand || '—',
-        model: a.booking_details?.vehicles?.models?.name || '—',
-        driverName: a.drivers?.full_name || '—',
-        customerName: a.booking_details?.bookings?.customer_name || '—',
-        customerPhone: a.booking_details?.bookings?.customer_phone || '—',
-        pickupAt: a.booking_details?.bookings?.pickup_at || '',
-        dropAt: a.booking_details?.bookings?.drop_at || '',
-        bookingStatus: a.booking_details?.bookings?.status || '—',
+        id:              a.id,
+        type:            a.type as HandoverType,
+        dateTime:        a.date_time,
+        location:        a.location || '—',
+        registrationNo:  a.booking_details?.vehicles?.registration_no || '—',
+        brand:           a.booking_details?.vehicles?.models?.brand   || '—',
+        model:           a.booking_details?.vehicles?.models?.name    || '—',
+        driverName:      a.drivers?.full_name  || '—',
+        driverPhone:     a.drivers?.phone      || '—',
+        customerName:    a.booking_details?.bookings?.customer_name  || '—',
+        customerPhone:   a.booking_details?.bookings?.customer_phone || '—',
+        pickupAt:        a.booking_details?.bookings?.pickup_at || '',
+        dropAt:          a.booking_details?.bookings?.drop_at   || '',
+        bookingStatus:   a.booking_details?.bookings?.status    || '—',
         bookingDetailId: a.booking_details?.id || '',
       }));
 
@@ -633,7 +675,7 @@ const HandoverPage: React.FC = () => {
     setLoading(false);
   };
 
-  useEffect(() => { loadHandovers(); }, []);
+  useEffect(() => { loadHandovers(selectedDate); }, [selectedDate]);
 
   const stats = {
     pending:    rows.filter(r => r.bookingStatus === 'BOOKED').length,
@@ -650,12 +692,8 @@ const HandoverPage: React.FC = () => {
     return matchSearch && (typeFilter === 'All' || r.type === typeFilter);
   });
 
-  const openPanel = (row: HandoverRow) => { setSelectedRow(row); setIsPanelOpen(true); };
+  const openPanel  = (row: HandoverRow) => { setSelectedRow(row); setIsPanelOpen(true); };
   const closePanel = () => { setIsPanelOpen(false); setSelectedRow(null); };
-
-
-
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
   return (
     <div className="min-h-full space-y-6 pb-10">
@@ -673,25 +711,19 @@ const HandoverPage: React.FC = () => {
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full bg-white border border-[#d1d0eb] rounded-full py-2.5 pl-11 pr-4 text-sm font-medium outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] transition-all" />
           </div>
-          {/* <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
-            <Calendar size={16} className="text-[#6c7e96]" />
-            <span>{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
-          </div> */}
-
-<div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
-  <Calendar size={16} className="text-[#6c7e96]" />
-  <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
-    className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer" />
-</div>
-
-
+          {/* Selective date picker — wired to loadHandovers */}
+          <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
+            <Calendar size={15} className="text-[#6c7e96] shrink-0" />
+            <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+              className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]" />
+          </div>
         </div>
       </div>
 
-      {/* Stats — unchanged */}
+      {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Pending Handover', count: stats.pending,    color: 'text-orange-500', bg: 'bg-orange-50',  icon: <Clock size={20} /> },
+          { label: 'Pending Handover', count: stats.pending,    color: 'text-orange-500', bg: 'bg-orange-50', icon: <Clock size={20} /> },
           { label: 'Checked Out',      count: stats.checkedOut, color: 'text-blue-500',   bg: 'bg-blue-50',   icon: <Car size={20} /> },
           { label: 'Returned Today',   count: stats.returned,   color: 'text-green-500',  bg: 'bg-green-50',  icon: <CheckCircle2 size={20} /> },
         ].map((s, i) => (
@@ -749,24 +781,23 @@ const HandoverPage: React.FC = () => {
                   </div>
                 </td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={5} className="py-16 text-center text-[#6c7e96] text-sm font-medium">No handover records found.</td></tr>
+                <tr><td colSpan={5} className="py-16 text-center text-[#6c7e96] text-sm font-medium">No handover records found for this date.</td></tr>
               ) : filtered.map((row, idx) => (
                 <motion.tr key={row.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.03 }}
                   className="hover:bg-[#F8F9FA] transition-colors cursor-pointer" onClick={() => openPanel(row)}>
 
+                  {/* ── Date & Time — same line, date bold + time muted same size ── */}
                   <td className="py-4 pl-8 whitespace-nowrap">
                     <div className="flex items-center space-x-2">
                       <span className={`px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-widest shrink-0 ${
                         row.type === 'Pick' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'
                       }`}>{row.type.toUpperCase()}</span>
-                      <div>
-                        <p className="text-sm font-bold text-[#151a3c]">
-                          {new Date(row.dateTime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                        </p>
-                        <p className="text-[11px] font-medium text-[#6c7e96]">
+                      <p className="text-sm font-bold text-[#151a3c]">
+                        {new Date(row.dateTime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        <span className="font-medium text-[#6c7e96] ml-1.5">
                           {new Date(row.dateTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
-                        </p>
-                      </div>
+                        </span>
+                      </p>
                     </div>
                   </td>
 
@@ -780,12 +811,21 @@ const HandoverPage: React.FC = () => {
                     </div>
                   </td>
 
+                  {/* ── Driver — phone shown below name, mirrors Customer ── */}
                   <td className="py-4 px-4 whitespace-nowrap">
                     <div className="flex items-center space-x-2">
                       <div className="w-7 h-7 rounded-full bg-[#EEEDFA] flex items-center justify-center text-[#6360DF] text-[9px] font-extrabold shrink-0">
                         {row.driverName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                       </div>
-                      <span className="text-sm font-medium text-[#151a3c]">{row.driverName}</span>
+                      <div>
+                        <p className="text-sm font-bold text-[#151a3c]">{row.driverName}</p>
+                        {row.driverPhone && row.driverPhone !== '—' && (
+                          <div className="flex items-center space-x-1 mt-0.5">
+                            <Phone size={9} className="text-[#6360DF]" />
+                            <span className="text-[11px] font-medium text-[#6c7e96]">{row.driverPhone}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
 
@@ -821,24 +861,27 @@ const HandoverPage: React.FC = () => {
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               className="fixed inset-y-0 right-0 z-[120] w-full max-w-[500px] bg-white shadow-2xl flex flex-col">
 
-              {/* Panel Header */}
+              {/* Panel Header
+                  Drop (Vehicle Drop-Off) → Orange
+                  Pick (Vehicle Return)   → Blue
+              */}
               <div className={`px-8 py-5 border-b border-slate-100 flex items-center justify-between shrink-0 ${
-                selectedRow.type === 'Pick' ? 'bg-orange-50/60' : 'bg-[#f8f7ff]'
+                selectedRow.type === 'Drop' ? 'bg-orange-50/60' : 'bg-[#f8f7ff]'
               }`}>
                 <div className="flex items-center space-x-3">
                   <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${
-                    selectedRow.type === 'Pick' ? 'bg-orange-100 text-orange-500' : 'bg-[#EEEDFA] text-[#6360DF]'
+                    selectedRow.type === 'Drop' ? 'bg-orange-100 text-orange-500' : 'bg-[#EEEDFA] text-[#6360DF]'
                   }`}>
                     <ClipboardList size={20} />
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-[#151a3c]">
-                      {selectedRow.type === 'Pick' ? 'Vehicle Return' : 'Vehicle Drop-Off'}
+                      {selectedRow.type === 'Drop' ? 'Vehicle Drop-Off' : 'Vehicle Return'}
                     </h3>
                     <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-widest mt-0.5 ${
-                      selectedRow.type === 'Pick' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'
+                      selectedRow.type === 'Drop' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'
                     }`}>
-                      {selectedRow.type === 'Pick' ? 'PICK UP' : 'DROP OFF'}
+                      {selectedRow.type === 'Drop' ? 'DROP OFF' : 'PICK UP'}
                     </span>
                   </div>
                 </div>

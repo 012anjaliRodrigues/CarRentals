@@ -21,6 +21,8 @@ interface StaffUser {
     vehicles: boolean;
     drivers: boolean;
     reports: boolean;
+    handover: boolean;
+    allocation: boolean;
   };
   last_login_at: string | null;
   created_at: string;
@@ -37,13 +39,22 @@ interface NewUserForm {
     vehicles: boolean;
     drivers: boolean;
     reports: boolean;
+    handover: boolean;
+    allocation: boolean;
   };
 }
 
 const SUPABASE_URL = 'https://yliattfjerzkjqdqntqk.supabase.co';
 
-const defaultPermissions = { bookings: true, vehicles: false, drivers: false, reports: false };
-const managerPermissions = { bookings: true, vehicles: true, drivers: true, reports: true };
+// ── Default & manager permissions (now include handover + allocation) ──
+const defaultPermissions = {
+  bookings: true, vehicles: false, drivers: false,
+  reports: false, handover: false, allocation: false,
+};
+const managerPermissions = {
+  bookings: true, vehicles: true, drivers: true,
+  reports: true, handover: true, allocation: true,
+};
 
 // ── Add User Popup ────────────────────────────────────────────
 const AddUserPopup: React.FC<{
@@ -54,7 +65,6 @@ const AddUserPopup: React.FC<{
     full_name: '', email: '', phone: '', role: 'staff',
     password: '', permissions: { ...defaultPermissions },
   });
-  const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -68,7 +78,7 @@ const AddUserPopup: React.FC<{
   const handleSave = async () => {
     setError('');
     if (!form.full_name.trim()) { setError('Full name is required.'); return; }
-    if (!form.email.trim()) { setError('Email is required.'); return; }
+    if (!form.email.trim())     { setError('Email is required.'); return; }
     if (!form.password || form.password.length < 6) { setError('Password must be at least 6 characters.'); return; }
 
     setSaving(true);
@@ -83,11 +93,11 @@ const AddUserPopup: React.FC<{
           'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          email: form.email.trim(),
-          password: form.password,
-          full_name: form.full_name.trim(),
-          phone: form.phone.trim() || null,
-          role: form.role,
+          email:       form.email.trim(),
+          password:    form.password,
+          full_name:   form.full_name.trim(),
+          phone:       form.phone.trim() || null,
+          role:        form.role,
           permissions: form.permissions,
         }),
       });
@@ -105,11 +115,14 @@ const AddUserPopup: React.FC<{
     }
   };
 
+  // ── Permission labels — now 6 options in 2-col grid ──
   const permLabels: { key: keyof typeof defaultPermissions; label: string }[] = [
-    { key: 'bookings', label: 'Bookings' },
-    { key: 'vehicles', label: 'Vehicles' },
-    { key: 'drivers',  label: 'Drivers' },
-    { key: 'reports',  label: 'Reports' },
+    { key: 'bookings',   label: 'Bookings'   },
+    { key: 'vehicles',   label: 'Vehicles'   },
+    { key: 'drivers',    label: 'Drivers'    },
+    { key: 'reports',    label: 'Reports'    },
+    { key: 'handover',   label: 'Handover'   },
+    { key: 'allocation', label: 'Allocation' },
   ];
 
   return (
@@ -131,6 +144,7 @@ const AddUserPopup: React.FC<{
         </div>
 
         <div className="space-y-5">
+
           {/* Full Name */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider">Full Name <span className="text-red-500">*</span></label>
@@ -139,13 +153,13 @@ const AddUserPopup: React.FC<{
               className="w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-medium text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10" />
           </div>
 
-          {/* Email */}
-          <div className="space-y-1.5">
+          {/* Email — kept in form state for API, hidden from UI */}
+          {/* <div className="space-y-1.5">
             <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider">Email <span className="text-red-500">*</span></label>
             <input type="email" value={form.email} onChange={e => setForm(f => ({...f, email: e.target.value}))}
               placeholder="riya@example.com"
               className="w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-medium text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10" />
-          </div>
+          </div> */}
 
           {/* Phone */}
           <div className="space-y-1.5">
@@ -172,8 +186,8 @@ const AddUserPopup: React.FC<{
             </div>
           </div>
 
-          {/* Password */}
-          <div className="space-y-1.5">
+          {/* Password — kept in form state for API, hidden from UI */}
+          {/* <div className="space-y-1.5">
             <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider">Password <span className="text-red-500">*</span></label>
             <div className="relative">
               <input type={showPassword ? 'text' : 'password'} value={form.password}
@@ -185,9 +199,9 @@ const AddUserPopup: React.FC<{
                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
-          </div>
+          </div> */}
 
-          {/* Permissions */}
+          {/* Page Access — 6 options: Bookings, Vehicles, Drivers, Reports, Handover, Allocation */}
           <div className="space-y-2.5">
             <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider">Page Access</label>
             <div className="grid grid-cols-2 gap-2">
@@ -328,7 +342,8 @@ const UsersPage: React.FC = () => {
     return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
-  const permKeys = ['bookings', 'vehicles', 'drivers', 'reports'] as const;
+  // ── All 6 permission keys ──
+  const permKeys = ['bookings', 'vehicles', 'drivers', 'reports', 'handover', 'allocation'] as const;
 
   return (
     <div className="space-y-6 pb-10">
@@ -431,7 +446,7 @@ const UsersPage: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Permissions */}
+                  {/* Permissions — now shows all 6 keys */}
                   <div className="col-span-2 flex flex-wrap gap-1">
                     {permKeys.filter(k => staff.permissions?.[k]).map(k => (
                       <span key={k} className="text-[9px] font-bold bg-[#F1F5F9] text-[#64748b] px-2 py-0.5 rounded-md capitalize">{k}</span>
@@ -448,7 +463,6 @@ const UsersPage: React.FC = () => {
 
                   {/* Actions */}
                   <div className="col-span-1 flex items-center justify-end space-x-1">
-                    {/* Active toggle */}
                     <button
                       onClick={() => handleToggle(staff.id)}
                       disabled={togglingId === staff.id}
@@ -458,7 +472,6 @@ const UsersPage: React.FC = () => {
                         ? <Loader2 size={10} className="absolute top-1.5 left-1 text-white animate-spin" />
                         : <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${staff.is_active ? 'left-4' : 'left-0.5'}`} />}
                     </button>
-                    {/* Delete */}
                     <button onClick={() => setConfirmDeleteId(staff.id)}
                       className="p-1.5 text-[#cbd5e1] hover:text-red-500 transition-colors">
                       <Trash2 size={14} />
