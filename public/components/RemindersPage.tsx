@@ -67,7 +67,6 @@ const RemindersPage: React.FC = () => {
         .from('reminders')
         .select('id, type, category, due_date, priority, status, days_remaining, notes, vehicle_id, vehicles(registration_no, models(brand, name))')
         .eq('owner_id', ownerRow.id)
-        .eq('due_date', date)                          // ← filter by selected date
         .order('due_date', { ascending: true }),
       supabase
         .from('vehicles')
@@ -111,16 +110,48 @@ const RemindersPage: React.FC = () => {
     completed: reminders.filter(r => r.status === 'Completed').length,
   }), [reminders]);
 
-  const filteredReminders = useMemo(() => reminders.filter(r => {
-    const matchesSearch =
-      r.vehicle.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.model.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.type.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesType     = typeFilter     === 'All Types'      || r.category === typeFilter;
-    const matchesStatus   = statusFilter   === 'All Statuses'   || r.status   === statusFilter;
-    const matchesPriority = priorityFilter === 'All Priorities' || r.priority === priorityFilter;
-    return matchesSearch && matchesType && matchesStatus && matchesPriority;
-  }), [reminders, searchQuery, typeFilter, statusFilter, priorityFilter]);
+  // const filteredReminders = useMemo(() => reminders.filter(r => {
+  //   const matchesSearch =
+  //     r.vehicle.toLowerCase().includes(searchQuery.toLowerCase()) ||
+  //     r.model.toLowerCase().includes(searchQuery.toLowerCase()) ||
+  //     r.type.toLowerCase().includes(searchQuery.toLowerCase());
+  //   const matchesType     = typeFilter     === 'All Types'      || r.category === typeFilter;
+  //   const matchesStatus   = statusFilter   === 'All Statuses'   || r.status   === statusFilter;
+  //   const matchesPriority = priorityFilter === 'All Priorities' || r.priority === priorityFilter;
+  //   return matchesSearch && matchesType && matchesStatus && matchesPriority;
+  // }), [reminders, searchQuery, typeFilter, statusFilter, priorityFilter]);
+
+
+  const filteredReminders = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+  
+    return reminders
+      .filter(r => {
+        const matchesSearch =
+          r.vehicle.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.model.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.type.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesType     = typeFilter     === 'All Types'      || r.category === typeFilter;
+        const matchesStatus   = statusFilter   === 'All Statuses'   || r.status   === statusFilter;
+        const matchesPriority = priorityFilter === 'All Priorities' || r.priority === priorityFilter;
+  
+        // When a specific date is selected (not today), show only that date's reminders
+        const matchesDate = selectedDate === today || r.dueDate === selectedDate;
+  
+        return matchesSearch && matchesType && matchesStatus && matchesPriority && matchesDate;
+      })
+      .sort((a, b) => {
+        const isAToday = a.dueDate === today;
+        const isBToday = b.dueDate === today;
+        // Today's reminders always first
+        if (isAToday && !isBToday) return -1;
+        if (!isAToday && isBToday) return 1;
+        // Within same group: sort by date ascending
+        return a.dueDate.localeCompare(b.dueDate);
+      });
+  }, [reminders, searchQuery, typeFilter, statusFilter, priorityFilter, selectedDate]);
+
+
 
   const handleUpdate = async (id: string, updates: Partial<Pick<ReminderDB, 'type' | 'priority' | 'dueDate' | 'notes'>>) => {
     let extraUpdates: any = {};

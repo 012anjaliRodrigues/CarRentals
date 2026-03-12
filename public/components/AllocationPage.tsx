@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Search, Calendar, MapPin, User, Car, Clock,
   RefreshCw, CheckCircle2, Loader2, AlertTriangle, ChevronDown,
-  X, Shield
+  X, Shield, Filter, SlidersHorizontal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -57,21 +57,14 @@ const AllocationDetailPopup: React.FC<AllocationDetailPopupProps> = ({ row, driv
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose} className="absolute inset-0 bg-[#151a3c]/40 backdrop-blur-sm" />
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-        className="absolute inset-0 bg-[#151a3c]/40 backdrop-blur-sm"
-      />
-      <motion.div
-        initial={{ opacity: 0, scale: 0.92, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
+        initial={{ opacity: 0, scale: 0.92, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.92, y: 20 }}
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
         className="relative w-full max-w-[520px] bg-white rounded-[2rem] shadow-2xl overflow-hidden"
       >
-        {/* Header */}
         <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <div className="w-12 h-12 rounded-2xl bg-[#EEEDFA] flex items-center justify-center text-[#6360DF]">
@@ -88,10 +81,7 @@ const AllocationDetailPopup: React.FC<AllocationDetailPopupProps> = ({ row, driv
             <X size={22} />
           </button>
         </div>
-
-        {/* Body */}
         <div className="p-8 space-y-6">
-          {/* Customer + Vehicle card */}
           <div className="bg-[#f8f7ff] rounded-2xl p-5 border border-[#d1d0eb]/30 space-y-4">
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 rounded-full bg-[#EEEDFA] flex items-center justify-center text-[#6360DF] text-[12px] font-extrabold shrink-0">
@@ -115,8 +105,6 @@ const AllocationDetailPopup: React.FC<AllocationDetailPopupProps> = ({ row, driv
               </div>
             </div>
           </div>
-
-          {/* Details grid */}
           <div className="grid grid-cols-2 gap-5">
             <div className="space-y-1">
               <p className="text-[10px] font-bold text-[#6c7e96] uppercase tracking-widest">Date & Time</p>
@@ -156,26 +144,18 @@ const AllocationDetailPopup: React.FC<AllocationDetailPopupProps> = ({ row, driv
               <p className="text-sm font-bold text-[#151a3c]">{row.transmission}</p>
             </div>
           </div>
-
-          {/* Status badge */}
           <div className="flex items-center space-x-2 bg-green-50 border border-green-100 rounded-xl px-4 py-3">
             <CheckCircle2 size={16} className="text-green-500 shrink-0" />
             <span className="text-sm font-bold text-green-700">Allocation Confirmed</span>
           </div>
         </div>
-
-        {/* Footer */}
         <div className="px-8 py-6 border-t border-slate-100 flex items-center space-x-3">
-          <button
-            onClick={onClose}
-            className="flex-1 px-6 py-3.5 border border-[#d1d0eb] rounded-xl text-sm font-bold text-[#6c7e96] hover:bg-slate-50 transition-colors"
-          >
+          <button onClick={onClose}
+            className="flex-1 px-6 py-3.5 border border-[#d1d0eb] rounded-xl text-sm font-bold text-[#6c7e96] hover:bg-slate-50 transition-colors">
             Close
           </button>
-          <button
-            onClick={() => { onClose(); onReallocate(row); }}
-            className="flex-1 flex items-center justify-center space-x-2 bg-[#6360DF] hover:bg-[#5451d0] text-white font-bold px-6 py-3.5 rounded-xl shadow-lg shadow-[#6360df33] transition-all"
-          >
+          <button onClick={() => { onClose(); onReallocate(row); }}
+            className="flex-1 flex items-center justify-center space-x-2 bg-[#6360DF] hover:bg-[#5451d0] text-white font-bold px-6 py-3.5 rounded-xl shadow-lg shadow-[#6360df33] transition-all">
             <RefreshCw size={15} />
             <span>Reallocate</span>
           </button>
@@ -184,6 +164,174 @@ const AllocationDetailPopup: React.FC<AllocationDetailPopupProps> = ({ row, driv
     </div>
   );
 };
+
+// ── Filter State ──────────────────────────────────────────────
+interface FilterState {
+  vehicle: string;
+  locationType: string;
+  location: string;
+  driver: string;
+}
+
+// ── Filter Panel ──────────────────────────────────────────────
+interface FilterPanelProps {
+  open: boolean;
+  filters: FilterState;
+  onChange: (f: FilterState) => void;
+  onClear: () => void;
+  onClose: () => void;
+  rows: AllocationRow[];
+  drivers: Driver[];
+}
+
+const FilterPanel: React.FC<FilterPanelProps> = ({ open, filters, onChange, onClear, onClose, rows, drivers }) => {
+  const uniqueVehicles = Array.from(new Set(rows.map(r => r.vehicle))).filter(Boolean).sort();
+  const uniqueLocations = Array.from(new Set([
+    ...rows.map(r => r.pickupLocation),
+    ...rows.map(r => r.dropLocation),
+  ])).filter(l => l && l !== '—').sort();
+  const activeCount = Object.values(filters).filter(Boolean).length;
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={onClose} className="fixed inset-0 z-[90] bg-transparent" />
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+            className="absolute right-0 top-full mt-2 z-[100] w-[520px] bg-white rounded-[1.5rem] shadow-2xl border border-[#d1d0eb]/40 overflow-hidden"
+          >
+            {/* Panel header */}
+            <div className="px-6 py-4 border-b border-[#d1d0eb]/30 flex items-center justify-between bg-[#FAFAFA]">
+              <div className="flex items-center space-x-2">
+                <SlidersHorizontal size={16} className="text-[#6360DF]" />
+                <span className="text-sm font-extrabold text-[#151a3c]">Filter Allocations</span>
+                {activeCount > 0 && (
+                  <span className="bg-[#6360DF] text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full">{activeCount}</span>
+                )}
+              </div>
+              <div className="flex items-center space-x-2">
+                {activeCount > 0 && (
+                  <button onClick={onClear}
+                    className="text-xs font-bold text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors">
+                    Clear all
+                  </button>
+                )}
+                <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-[#6c7e96]">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Filter grid */}
+            <div className="p-6 grid grid-cols-2 gap-5">
+              {/* Vehicle */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-extrabold text-[#6c7e96] uppercase tracking-widest flex items-center space-x-1.5">
+                  <Car size={11} className="text-[#6360DF]" /><span>Vehicle</span>
+                </label>
+                <div className="relative">
+                  <select value={filters.vehicle} onChange={e => onChange({ ...filters, vehicle: e.target.value })}
+                    className={`w-full appearance-none pl-3 pr-8 py-2.5 rounded-xl text-xs font-bold outline-none border transition-all cursor-pointer ${filters.vehicle ? 'bg-[#EEEDFA] border-[#6360DF] text-[#6360DF]' : 'bg-[#F8F9FA] border-[#d1d0eb] text-[#6c7e96]'}`}>
+                    <option value="">All Vehicles</option>
+                    {uniqueVehicles.map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                  <ChevronDown size={11} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Location Type */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-extrabold text-[#6c7e96] uppercase tracking-widest flex items-center space-x-1.5">
+                  <MapPin size={11} className="text-[#6360DF]" /><span>Location Type</span>
+                </label>
+                <div className="flex gap-2">
+                  {['', 'Pick', 'Drop'].map(v => (
+                    <button key={v} type="button" onClick={() => onChange({ ...filters, locationType: v })}
+                      className={`flex-1 py-2.5 rounded-xl text-[10px] font-extrabold border transition-all ${
+                        filters.locationType === v
+                          ? v === 'Pick' ? 'bg-blue-100 border-blue-400 text-blue-600'
+                          : v === 'Drop' ? 'bg-orange-100 border-orange-400 text-orange-600'
+                          : 'bg-[#EEEDFA] border-[#6360DF] text-[#6360DF]'
+                          : 'bg-[#F8F9FA] border-[#d1d0eb] text-[#6c7e96]'
+                      }`}>
+                      {v === '' ? 'All' : v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Location */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-extrabold text-[#6c7e96] uppercase tracking-widest flex items-center space-x-1.5">
+                  <MapPin size={11} className="text-[#6360DF]" /><span>Location</span>
+                </label>
+                <div className="relative">
+                  <select value={filters.location} onChange={e => onChange({ ...filters, location: e.target.value })}
+                    className={`w-full appearance-none pl-3 pr-8 py-2.5 rounded-xl text-xs font-bold outline-none border transition-all cursor-pointer ${filters.location ? 'bg-[#EEEDFA] border-[#6360DF] text-[#6360DF]' : 'bg-[#F8F9FA] border-[#d1d0eb] text-[#6c7e96]'}`}>
+                    <option value="">All Locations</option>
+                    {uniqueLocations.map(l => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                  <ChevronDown size={11} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Driver */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-extrabold text-[#6c7e96] uppercase tracking-widest flex items-center space-x-1.5">
+                  <User size={11} className="text-[#6360DF]" /><span>Driver</span>
+                </label>
+                <div className="relative">
+                  <select value={filters.driver} onChange={e => onChange({ ...filters, driver: e.target.value })}
+                    className={`w-full appearance-none pl-3 pr-8 py-2.5 rounded-xl text-xs font-bold outline-none border transition-all cursor-pointer ${filters.driver ? 'bg-[#EEEDFA] border-[#6360DF] text-[#6360DF]' : 'bg-[#F8F9FA] border-[#d1d0eb] text-[#6c7e96]'}`}>
+                    <option value="">All Drivers</option>
+                    {drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                  <ChevronDown size={11} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
+                </div>
+              </div>
+            </div>
+
+            {/* Active chips */}
+            {activeCount > 0 && (
+              <div className="px-6 pb-5 flex flex-wrap gap-2 border-t border-[#d1d0eb]/20 pt-4">
+                {filters.vehicle && (
+                  <span className="flex items-center space-x-1.5 bg-[#EEEDFA] text-[#6360DF] px-3 py-1.5 rounded-full text-[10px] font-bold">
+                    <Car size={10}/><span>{filters.vehicle}</span>
+                    <button onClick={() => onChange({ ...filters, vehicle: '' })}><X size={10}/></button>
+                  </span>
+                )}
+                {filters.locationType && (
+                  <span className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold ${filters.locationType === 'Pick' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>
+                    <span>{filters.locationType}</span>
+                    <button onClick={() => onChange({ ...filters, locationType: '' })}><X size={10}/></button>
+                  </span>
+                )}
+                {filters.location && (
+                  <span className="flex items-center space-x-1.5 bg-[#EEEDFA] text-[#6360DF] px-3 py-1.5 rounded-full text-[10px] font-bold">
+                    <MapPin size={10}/><span>{filters.location}</span>
+                    <button onClick={() => onChange({ ...filters, location: '' })}><X size={10}/></button>
+                  </span>
+                )}
+                {filters.driver && (
+                  <span className="flex items-center space-x-1.5 bg-[#EEEDFA] text-[#6360DF] px-3 py-1.5 rounded-full text-[10px] font-bold">
+                    <User size={10}/><span>{drivers.find(d => d.id === filters.driver)?.name}</span>
+                    <button onClick={() => onChange({ ...filters, driver: '' })}><X size={10}/></button>
+                  </span>
+                )}
+              </div>
+            )}
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+};
+
 // ─────────────────────────────────────────────────────────────
 
 const AllocationPage: React.FC = () => {
@@ -196,14 +344,12 @@ const AllocationPage: React.FC = () => {
   const [selectedDrivers, setSelectedDrivers] = useState<Record<string, string>>({});
   const [selectedVehicles, setSelectedVehicles] = useState<Record<string, string>>({});
   const [ownerId, setOwnerId] = useState<string | null>(null);
-
-  // Popup state
   const [popupRow, setPopupRow] = useState<AllocationRow | null>(null);
-
-  // ── Selective date — defaults to today, wired to DB query ──
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filters, setFilters] = useState<FilterState>({ vehicle: '', locationType: '', location: '', driver: '' });
+  const filterRef = useRef<HTMLDivElement>(null);
 
-  // ── loadData accepts a date and filters bookings by that day ──
   const loadData = async (date: string) => {
     setLoading(true);
     const authUser = await getCurrentUser();
@@ -212,7 +358,6 @@ const AllocationPage: React.FC = () => {
     if (!ownerRow) { setLoading(false); return; }
     setOwnerId(ownerRow.id);
 
-    // Filter: bookings whose pickup_at falls on the selected date
     const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
     const dayEnd   = new Date(date); dayEnd.setHours(23, 59, 59, 999);
 
@@ -237,7 +382,6 @@ const AllocationPage: React.FC = () => {
     ]);
 
     const allAllocations = (allocationsRes.data as any[]) || [];
-
     const allocMapPick: Record<string, any> = {};
     const allocMapDrop: Record<string, any> = {};
     allAllocations.forEach((a: any) => {
@@ -249,51 +393,32 @@ const AllocationPage: React.FC = () => {
     ((bookingDetailsRes.data as any[]) || []).forEach((d: any) => {
       const initials = d.bookings?.customer_name?.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) || '??';
       const base = {
-        realDetailId: d.id,
-        bookingId: d.bookings?.id,
+        realDetailId: d.id, bookingId: d.bookings?.id,
         customer: d.bookings?.customer_name || '—', initials,
         vehicle: d.vehicles?.models ? `${d.vehicles.models.brand} ${d.vehicles.models.name}` : '—',
-        vehicleId: d.vehicle_id,
-        registration: d.vehicles?.registration_no || '—',
+        vehicleId: d.vehicle_id, registration: d.vehicles?.registration_no || '—',
         vehicleType: d.vehicles?.models?.categories?.name || '—',
-        fuel: d.vehicles?.fuel_type || '—',
-        transmission: d.vehicles?.transmission || '—',
+        fuel: d.vehicles?.fuel_type || '—', transmission: d.vehicles?.transmission || '—',
         pickupLocation: d.bookings?.pickup_location || '—',
         dropLocation: d.bookings?.drop_location || '—',
-        pickupAt: d.bookings?.pickup_at || '',
-        dropAt: d.bookings?.drop_at || '',
+        pickupAt: d.bookings?.pickup_at || '', dropAt: d.bookings?.drop_at || '',
       };
 
       const pickAlloc = allocMapPick[d.id] || null;
-      mapped.push({
-        ...base,
-        detailId: `${d.id}_pick`,
-        locationType: 'Pick',
-        isAllocated: !!pickAlloc,
-        allocationId: pickAlloc?.id || null,
-        allocatedDriverId: pickAlloc?.driver_id || null,
-        allocatedDriverName: pickAlloc?.drivers?.full_name || null,
-        allocatedVehicleId: null,
-        allocatedVehicleReg: null,
-      });
+      mapped.push({ ...base, detailId: `${d.id}_pick`, locationType: 'Pick',
+        isAllocated: !!pickAlloc, allocationId: pickAlloc?.id || null,
+        allocatedDriverId: pickAlloc?.driver_id || null, allocatedDriverName: pickAlloc?.drivers?.full_name || null,
+        allocatedVehicleId: null, allocatedVehicleReg: null });
 
       const dropAlloc = allocMapDrop[d.id] || null;
-      mapped.push({
-        ...base,
-        detailId: `${d.id}_drop`,
-        locationType: 'Drop',
-        isAllocated: !!dropAlloc,
-        allocationId: dropAlloc?.id || null,
-        allocatedDriverId: dropAlloc?.driver_id || null,
-        allocatedDriverName: dropAlloc?.drivers?.full_name || null,
-        allocatedVehicleId: dropAlloc?.vehicle_id || null,
-        allocatedVehicleReg: dropAlloc?.vehicles?.registration_no || null,
-      });
+      mapped.push({ ...base, detailId: `${d.id}_drop`, locationType: 'Drop',
+        isAllocated: !!dropAlloc, allocationId: dropAlloc?.id || null,
+        allocatedDriverId: dropAlloc?.driver_id || null, allocatedDriverName: dropAlloc?.drivers?.full_name || null,
+        allocatedVehicleId: dropAlloc?.vehicle_id || null, allocatedVehicleReg: dropAlloc?.vehicles?.registration_no || null });
     });
 
     mapped.sort((a, b) => {
-      const tA = new Date(a.pickupAt).getTime();
-      const tB = new Date(b.pickupAt).getTime();
+      const tA = new Date(a.pickupAt).getTime(), tB = new Date(b.pickupAt).getTime();
       if (tA !== tB) return tB - tA;
       if (a.bookingId === b.bookingId) return a.locationType === 'Pick' ? -1 : 1;
       return 0;
@@ -308,7 +433,6 @@ const AllocationPage: React.FC = () => {
     setLoading(false);
   };
 
-  // Reload whenever selectedDate changes
   useEffect(() => { loadData(selectedDate); }, [selectedDate]);
 
   const fmtDateTime = (iso: string) => {
@@ -318,21 +442,18 @@ const AllocationPage: React.FC = () => {
 
   const handleReallocate = (row: AllocationRow) => {
     setSelectedDrivers(prev => ({ ...prev, [row.detailId]: row.allocatedDriverId || '' }));
-    if (row.locationType === 'Drop') {
+    if (row.locationType === 'Drop')
       setSelectedVehicles(prev => ({ ...prev, [row.detailId]: row.allocatedVehicleId || '' }));
-    }
   };
 
   const handleAllocate = async (row: AllocationRow) => {
     const driverId = selectedDrivers[row.detailId] || row.allocatedDriverId;
     if (!driverId) { toast.error('Please select a driver first.'); return; }
     if (!ownerId) return;
-
     const isDrop = row.locationType === 'Drop';
     const isoDateTime = isDrop ? row.dropAt : row.pickupAt;
     const location = isDrop ? row.dropLocation : row.pickupLocation;
     const vehicleId = isDrop ? (selectedVehicles[row.detailId] || row.allocatedVehicleId || null) : null;
-
     setSavingId(row.detailId);
     try {
       if (row.allocationId) {
@@ -341,15 +462,8 @@ const AllocationPage: React.FC = () => {
         const { error } = await supabase.from('allocations').update(updateData).eq('id', row.allocationId);
         if (error) { toast.error('Failed to update.'); return; }
       } else {
-        const insertData: any = {
-          owner_id: ownerId,
-          booking_detail_id: row.realDetailId,
-          driver_id: driverId,
-          type: row.locationType,
-          location,
-          date_time: isoDateTime,
-          is_confirmed: true,
-        };
+        const insertData: any = { owner_id: ownerId, booking_detail_id: row.realDetailId,
+          driver_id: driverId, type: row.locationType, location, date_time: isoDateTime, is_confirmed: true };
         if (vehicleId) insertData.vehicle_id = vehicleId;
         const { error } = await supabase.from('allocations').insert(insertData);
         if (error) { toast.error('Failed to save: ' + error.message); return; }
@@ -358,41 +472,37 @@ const AllocationPage: React.FC = () => {
       await loadData(selectedDate);
       setSelectedDrivers(prev => { const n = { ...prev }; delete n[row.detailId]; return n; });
       setSelectedVehicles(prev => { const n = { ...prev }; delete n[row.detailId]; return n; });
-    } catch {
-      toast.error('Something went wrong.');
-    } finally {
-      setSavingId(null);
-    }
+    } catch { toast.error('Something went wrong.'); }
+    finally { setSavingId(null); }
   };
 
   const getDisplayVehicle = (row: AllocationRow): string => {
     if (row.locationType !== 'Drop') return row.vehicle;
-    const selectedVId = selectedVehicles[row.detailId];
-    if (selectedVId) {
-      const found = availableVehicles.find(v => v.id === selectedVId);
-      return found ? found.name : row.vehicle;
-    }
-    return row.vehicle;
+    const found = availableVehicles.find(v => v.id === selectedVehicles[row.detailId]);
+    return found ? found.name : row.vehicle;
   };
 
   const getDisplayRegistration = (row: AllocationRow): string => {
     if (row.locationType !== 'Drop') return row.registration;
-    const selectedVId = selectedVehicles[row.detailId];
-    if (selectedVId) {
-      const found = availableVehicles.find(v => v.id === selectedVId);
-      return found ? found.registration : row.registration;
-    }
-    if (row.allocatedVehicleReg) return row.allocatedVehicleReg;
-    return row.registration;
+    const found = availableVehicles.find(v => v.id === selectedVehicles[row.detailId]);
+    if (found) return found.registration;
+    return row.allocatedVehicleReg || row.registration;
   };
 
-  const filtered = rows.filter(r =>
-    r.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    r.vehicle.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    r.registration.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filtered = rows.filter(r => {
+    const rowLocation = r.locationType === 'Drop' ? r.dropLocation : r.pickupLocation;
+    const matchSearch = r.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      r.vehicle.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      r.registration.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchSearch &&
+      (!filters.vehicle      || r.vehicle === filters.vehicle) &&
+      (!filters.locationType || r.locationType === filters.locationType) &&
+      (!filters.location     || rowLocation === filters.location) &&
+      (!filters.driver       || r.allocatedDriverId === filters.driver);
+  });
 
   const unallocatedCount = rows.filter(r => !r.isAllocated).length;
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   return (
     <div className="min-h-full">
@@ -408,19 +518,37 @@ const AllocationPage: React.FC = () => {
             {/* Search */}
             <div className="relative group min-w-[200px]">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#cbd5e1] w-4 h-4 group-focus-within:text-[#6360DF] transition-colors" />
-              <input type="text" placeholder="Search driver or vehicle..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              <input type="text" placeholder="Search driver or vehicle..." value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
                 className="w-full bg-white border border-[#d1d0eb] rounded-full py-2.5 pl-11 pr-4 text-sm font-medium outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] transition-all" />
             </div>
 
-            {/* Selective date picker — wired to loadData */}
-            <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb] text-sm font-semibold text-[#151a3c]">
+            {/* Date picker */}
+            <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb]">
               <Calendar size={15} className="text-[#6c7e96] shrink-0" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={e => setSelectedDate(e.target.value)}
-                className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]"
-              />
+              <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+                className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]" />
+            </div>
+
+            {/* Filter button */}
+            <div className="relative" ref={filterRef}>
+              <button onClick={() => setFilterOpen(o => !o)}
+                className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl border text-sm font-bold transition-all ${
+                  activeFilterCount > 0
+                    ? 'bg-[#6360DF] border-[#6360DF] text-white shadow-md shadow-[#6360df33]'
+                    : 'bg-white border-[#d1d0eb] text-[#6c7e96] hover:border-[#6360DF] hover:text-[#6360DF]'
+                }`}>
+                <Filter size={14} />
+                <span>Filters</span>
+                {activeFilterCount > 0 && (
+                  <span className="bg-white text-[#6360DF] text-[10px] font-extrabold w-5 h-5 rounded-full flex items-center justify-center">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+              <FilterPanel open={filterOpen} filters={filters} onChange={setFilters}
+                onClear={() => setFilters({ vehicle: '', locationType: '', location: '', driver: '' })}
+                onClose={() => setFilterOpen(false)} rows={rows} drivers={drivers} />
             </div>
 
             {/* Unallocated badge */}
@@ -433,6 +561,39 @@ const AllocationPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Active filter chips */}
+        {activeFilterCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider">Active:</span>
+            {filters.vehicle && (
+              <span className="flex items-center space-x-1.5 bg-[#EEEDFA] text-[#6360DF] px-3 py-1.5 rounded-full text-[11px] font-bold">
+                <Car size={10}/><span>{filters.vehicle}</span>
+                <button onClick={() => setFilters(f => ({ ...f, vehicle: '' }))}><X size={10}/></button>
+              </span>
+            )}
+            {filters.locationType && (
+              <span className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold ${filters.locationType === 'Pick' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>
+                <span>{filters.locationType}</span>
+                <button onClick={() => setFilters(f => ({ ...f, locationType: '' }))}><X size={10}/></button>
+              </span>
+            )}
+            {filters.location && (
+              <span className="flex items-center space-x-1.5 bg-[#EEEDFA] text-[#6360DF] px-3 py-1.5 rounded-full text-[11px] font-bold">
+                <MapPin size={10}/><span>{filters.location}</span>
+                <button onClick={() => setFilters(f => ({ ...f, location: '' }))}><X size={10}/></button>
+              </span>
+            )}
+            {filters.driver && (
+              <span className="flex items-center space-x-1.5 bg-[#EEEDFA] text-[#6360DF] px-3 py-1.5 rounded-full text-[11px] font-bold">
+                <User size={10}/><span>{drivers.find(d => d.id === filters.driver)?.name}</span>
+                <button onClick={() => setFilters(f => ({ ...f, driver: '' }))}><X size={10}/></button>
+              </span>
+            )}
+            <button onClick={() => setFilters({ vehicle: '', locationType: '', location: '', driver: '' })}
+              className="text-[11px] font-bold text-red-500 hover:underline ml-1">Clear all</button>
+          </div>
+        )}
+
         {/* ── Table ── */}
         <div className="bg-white rounded-[2rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
           <div className="overflow-x-auto">
@@ -440,13 +601,12 @@ const AllocationPage: React.FC = () => {
               <thead>
                 <tr className="bg-[#F8F9FA]/50 text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase border-b border-[#d1d0eb]/20">
                   <th className="pl-8 py-5">Customer</th>
-                  {/* Vehicle column — reg removed from header too */}
                   <th className="px-4 py-5">Vehicle</th>
-                  <th className="px-4 py-5">Type</th>
                   <th className="px-4 py-5">Location Type</th>
+                  <th className="px-4 py-5">Location</th>
                   <th className="px-4 py-5">Date & Time</th>
-                  <th className="px-4 py-5">Assign Driver</th>
                   <th className="px-4 py-5">Vehicle No.</th>
+                  <th className="px-4 py-5">Assign Driver</th>
                   <th className="px-6 py-5 text-center">Action</th>
                 </tr>
               </thead>
@@ -460,7 +620,7 @@ const AllocationPage: React.FC = () => {
                   </td></tr>
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={8} className="py-16 text-center text-[#6c7e96] text-sm font-medium">
-                    {rows.length === 0 ? 'No bookings found for this date.' : 'No results match your search.'}
+                    {rows.length === 0 ? 'No bookings found for this date.' : 'No results match your filters.'}
                   </td></tr>
                 ) : (
                   filtered.map((row, idx) => {
@@ -468,56 +628,35 @@ const AllocationPage: React.FC = () => {
                     const isEditing = selectedDrivers[row.detailId] !== undefined || selectedVehicles[row.detailId] !== undefined;
                     const isDrop = row.locationType === 'Drop';
                     const rowTime = isDrop ? row.dropAt : row.pickupAt;
+                    const rowLocation = isDrop ? row.dropLocation : row.pickupLocation;
                     const displayVehicle = getDisplayVehicle(row);
 
                     return (
-                      <motion.tr
-                        key={row.detailId}
-                        initial={{ opacity: 0, y: 5 }}
-                        animate={{ opacity: 1, y: 0 }}
+                      <motion.tr key={row.detailId} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: idx * 0.03 }}
-                        onClick={() => {
-                          if (row.isAllocated && !isEditing) setPopupRow(row);
-                        }}
+                        onClick={() => { if (row.isAllocated && !isEditing) setPopupRow(row); }}
                         className={`group transition-colors ${
-                          row.isAllocated && !isEditing
-                            ? 'cursor-pointer hover:bg-[#f8f7ff]'
-                            : isUnallocated
-                            ? 'bg-red-50/40 hover:bg-red-50'
-                            : 'hover:bg-[#F8F9FA]'
-                        }`}
-                      >
-                        {/* ── Customer — darker text + highlighted location ── */}
+                          row.isAllocated && !isEditing ? 'cursor-pointer hover:bg-[#f8f7ff]'
+                          : isUnallocated ? 'bg-red-50/40 hover:bg-red-50'
+                          : 'hover:bg-[#F8F9FA]'
+                        }`}>
+
+                        {/* Customer */}
                         <td className="py-4 pl-8 whitespace-nowrap">
                           <div className="flex items-center space-x-3">
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-extrabold shrink-0 ${isUnallocated ? 'bg-red-100 text-red-500' : 'bg-[#EEEDFA] text-[#6360DF]'}`}>
                               {row.initials}
                             </div>
-                            <div>
-                              {/* Darker, heavier customer name */}
-                              <p className="font-extrabold text-[#0f1535] text-sm tracking-tight">{row.customer}</p>
-                              {/* Highlighted location pill */}
-                              <div className="flex items-center space-x-1 mt-1">
-                                <MapPin size={9} className="text-[#6360DF] shrink-0" />
-                                <span className="text-[10px] font-bold text-[#6360DF] bg-[#EEEDFA] px-2 py-0.5 rounded-full">
-                                  {isDrop ? row.dropLocation : row.pickupLocation}
-                                </span>
-                              </div>
-                            </div>
+                            <p className="font-extrabold text-[#0f1535] text-sm tracking-tight">{row.customer}</p>
                           </div>
                         </td>
 
-                        {/* ── Vehicle — name only, no registration ── */}
+                        {/* Vehicle */}
                         <td className="py-4 px-4 whitespace-nowrap">
                           <div className="flex items-center space-x-2">
                             <Car size={13} className="text-[#6360DF] shrink-0" />
                             <p className="font-bold text-[#151a3c] text-sm">{displayVehicle}</p>
                           </div>
-                        </td>
-
-                        {/* Vehicle Type */}
-                        <td className="py-4 px-4 whitespace-nowrap">
-                          <span className="bg-[#f1f5f9] px-2.5 py-1 rounded-md text-[11px] font-bold text-[#151a3c]">{row.vehicleType}</span>
                         </td>
 
                         {/* Location Type */}
@@ -527,36 +666,20 @@ const AllocationPage: React.FC = () => {
                           </span>
                         </td>
 
+                        {/* Location — from DB */}
+                        <td className="py-4 px-4 whitespace-nowrap">
+                          <div className="flex items-center space-x-1.5">
+                            <MapPin size={11} className="text-[#6360DF] shrink-0" />
+                            <span className="text-xs font-bold text-[#151a3c]">{rowLocation}</span>
+                          </div>
+                        </td>
+
                         {/* Date & Time */}
                         <td className="py-4 px-4 whitespace-nowrap">
                           <div className="flex items-center space-x-1.5 text-xs font-bold">
                             <Clock size={11} className={isUnallocated ? 'text-red-400' : 'text-[#6c7e96]'} />
                             <span className={isUnallocated ? 'text-red-500' : 'text-[#151a3c]'}>{fmtDateTime(rowTime)}</span>
                           </div>
-                        </td>
-
-                        {/* Driver dropdown */}
-                        <td className="py-4 px-4 whitespace-nowrap" onClick={e => e.stopPropagation()}>
-                          {isUnallocated || isEditing ? (
-                            <div className="relative">
-                              <select
-                                value={selectedDrivers[row.detailId] ?? (row.allocatedDriverId || '')}
-                                onChange={e => setSelectedDrivers(prev => ({ ...prev, [row.detailId]: e.target.value }))}
-                                className={`appearance-none pr-8 pl-3 py-2 rounded-lg text-xs font-bold outline-none border cursor-pointer w-[150px] ${isUnallocated ? 'bg-red-50 border-red-200 text-[#151a3c] focus:border-red-400' : 'bg-[#f8f7ff] border-[#d1d0eb] text-[#151a3c] focus:border-[#6360DF]'}`}
-                              >
-                                <option value="">Select driver...</option>
-                                {drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                              </select>
-                              <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
-                            </div>
-                          ) : (
-                            <div className="flex items-center space-x-2">
-                              <div className="w-6 h-6 rounded-full bg-[#EEEDFA] flex items-center justify-center">
-                                <User size={11} className="text-[#6360DF]" />
-                              </div>
-                              <span className="text-xs font-bold text-[#151a3c]">{row.allocatedDriverName || '—'}</span>
-                            </div>
-                          )}
                         </td>
 
                         {/* Vehicle No — Drop only */}
@@ -568,12 +691,10 @@ const AllocationPage: React.FC = () => {
                                   value={selectedVehicles[row.detailId] ?? (row.allocatedVehicleId || '')}
                                   onChange={e => {
                                     setSelectedVehicles(prev => ({ ...prev, [row.detailId]: e.target.value }));
-                                    if (!selectedDrivers[row.detailId]) {
+                                    if (!selectedDrivers[row.detailId])
                                       setSelectedDrivers(prev => ({ ...prev, [row.detailId]: row.allocatedDriverId || '' }));
-                                    }
                                   }}
-                                  className={`appearance-none pr-8 pl-3 py-2 rounded-lg text-xs font-bold outline-none border cursor-pointer w-[150px] ${isUnallocated ? 'bg-red-50 border-red-200 text-[#151a3c] focus:border-red-400' : 'bg-[#f8f7ff] border-[#d1d0eb] text-[#151a3c] focus:border-[#6360DF]'}`}
-                                >
+                                  className={`appearance-none pr-8 pl-3 py-2 rounded-lg text-xs font-bold outline-none border cursor-pointer w-[150px] ${isUnallocated ? 'bg-red-50 border-red-200 text-[#151a3c] focus:border-red-400' : 'bg-[#f8f7ff] border-[#d1d0eb] text-[#151a3c] focus:border-[#6360DF]'}`}>
                                   <option value="">Select vehicle...</option>
                                   {availableVehicles.map(v => <option key={v.id} value={v.id}>{v.registration}</option>)}
                                 </select>
@@ -590,28 +711,43 @@ const AllocationPage: React.FC = () => {
                           )}
                         </td>
 
+                        {/* Assign Driver */}
+                        <td className="py-4 px-4 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                          {isUnallocated || isEditing ? (
+                            <div className="relative">
+                              <select
+                                value={selectedDrivers[row.detailId] ?? (row.allocatedDriverId || '')}
+                                onChange={e => setSelectedDrivers(prev => ({ ...prev, [row.detailId]: e.target.value }))}
+                                className={`appearance-none pr-8 pl-3 py-2 rounded-lg text-xs font-bold outline-none border cursor-pointer w-[150px] ${isUnallocated ? 'bg-red-50 border-red-200 text-[#151a3c] focus:border-red-400' : 'bg-[#f8f7ff] border-[#d1d0eb] text-[#151a3c] focus:border-[#6360DF]'}`}>
+                                <option value="">Select driver...</option>
+                                {drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                              </select>
+                              <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
+                            </div>
+                          ) : (
+                            <div className="flex items-center space-x-2">
+                              <div className="w-6 h-6 rounded-full bg-[#EEEDFA] flex items-center justify-center">
+                                <User size={11} className="text-[#6360DF]" />
+                              </div>
+                              <span className="text-xs font-bold text-[#151a3c]">{row.allocatedDriverName || '—'}</span>
+                            </div>
+                          )}
+                        </td>
+
                         {/* Action */}
                         <td className="py-4 px-6 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-center">
                             {row.isAllocated && !isEditing ? (
                               <div className="flex items-center space-x-1.5 text-[11px] font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg">
-                                <CheckCircle2 size={11} />
-                                <span>Allocated</span>
+                                <CheckCircle2 size={11} /><span>Allocated</span>
                               </div>
                             ) : (
-                              <button
-                                onClick={() => handleAllocate(row)}
-                                disabled={savingId === row.detailId}
+                              <button onClick={() => handleAllocate(row)} disabled={savingId === row.detailId}
                                 className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-[11px] font-bold transition-all disabled:opacity-60 ${
-                                  isUnallocated
-                                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-md shadow-red-200'
-                                    : 'bg-[#6360DF] hover:bg-[#5451d0] text-white'
-                                }`}
-                              >
-                                {savingId === row.detailId
-                                  ? <Loader2 size={11} className="animate-spin" />
-                                  : <CheckCircle2 size={11} />
-                                }
+                                  isUnallocated ? 'bg-red-500 hover:bg-red-600 text-white shadow-md shadow-red-200'
+                                  : 'bg-[#6360DF] hover:bg-[#5451d0] text-white'
+                                }`}>
+                                {savingId === row.detailId ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
                                 <span>{savingId === row.detailId ? 'Saving...' : row.isAllocated ? 'Update' : 'Allocate'}</span>
                               </button>
                             )}
@@ -627,19 +763,11 @@ const AllocationPage: React.FC = () => {
         </div>
       </motion.div>
 
-      {/* Allocation Detail Popup */}
       <AnimatePresence>
         {popupRow && (
-          <AllocationDetailPopup
-            row={popupRow}
-            drivers={drivers}
-            availableVehicles={availableVehicles}
+          <AllocationDetailPopup row={popupRow} drivers={drivers} availableVehicles={availableVehicles}
             onClose={() => setPopupRow(null)}
-            onReallocate={(row) => {
-              setPopupRow(null);
-              handleReallocate(row);
-            }}
-          />
+            onReallocate={(row) => { setPopupRow(null); handleReallocate(row); }} />
         )}
       </AnimatePresence>
     </div>

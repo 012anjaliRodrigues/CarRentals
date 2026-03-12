@@ -19,6 +19,8 @@ import HandoverPage from './HandoverPage';
 import { ClipboardList } from 'lucide-react';
 import VehiclesPage from './VehiclesPage';
 import UsersPage from './Userspage';
+import Settingspage from './Settingspage';
+
 
 
 const StatCard: React.FC<{
@@ -673,7 +675,12 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
              {activeTab === 'Users' && (
               <motion.div key="users" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}><UsersPage /></motion.div>
             )}
-            {!['Dashboard','Fleet Listing','Vehicles','Bookings','Drivers','Allocation','Reminders','Handover'].includes(activeTab) && (
+            {activeTab === 'Settings' && (
+  <motion.div key="settings" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
+    <Settingspage />
+  </motion.div>
+)}
+{!['Dashboard','Fleet Listing','Vehicles','Bookings','Drivers','Allocation','Reminders','Handover','Settings','Users'].includes(activeTab) && (
               <motion.div key="coming-soon" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.3 }}
                 className="h-full flex flex-col items-center justify-center text-center py-20">
                 <div className="w-20 h-20 bg-[#EEEDFA] rounded-3xl flex items-center justify-center mb-6 text-[#6360DF]">
