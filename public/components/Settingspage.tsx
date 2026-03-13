@@ -1,160 +1,333 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  Settings, User, Building2, MapPin, Receipt,
-  Bell, Shield, Loader2, Check, X, Plus, Trash2,
-  ChevronRight, AlertCircle, Phone, Mail, Globe,
-  Tag, Clock
+  MapPin, Loader2, Check, X, Plus,
+  Clock, Trash2, Pencil,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { supabase, getCurrentUser } from '../supabaseClient';
 
+// ── Goa locations ─────────────────────────────────────────────
+const GOA_LOCATIONS = [
+  'Panaji','Panjim','Mapusa','Margao','Vasco da Gama','Mormugao',
+  'Calangute','Candolim','Baga','Anjuna','Vagator','Chapora',
+  'Arambol','Mandrem','Ashvem','Morjim','Pernem','Siolim',
+  'Assagao','Saligao','Porvorim','Reis Magos','Verem','Nerul',
+  'Arpora','Nagoa','Sangolda','Pilerne','Miramar','Dona Paula',
+  'Bambolim','Taleigao','Santa Cruz','Curca','Goa Velha','Old Goa',
+  'Ponda','Farmagudi','Priol','Shiroda','Bandora','Quepem',
+  'Curchorem','Sanvordem','Chandor','Curtorim','Raia','Loutolim',
+  'Benaulim','Colva','Betalbatim','Majorda','Utorda','Varca',
+  'Cavelossim','Mobor','Betul','Cuncolim','Velim','Navelim',
+  'Fatorda','Aquem','Bogmalo','Chicalim','Dabolim','Zuarinagar',
+  'Cortalim','Sancoale','Cansaulim','Arossim','Bicholim','Sanquelim',
+  'Valpoi','Canacona','Chaudi','Palolem','Patnem','Agonda',
+  'Cabo de Rama','Polem','Galgibaga','Dabolim Airport','Mopa Airport',
+];
+
 // ── Types ─────────────────────────────────────────────────────
-interface OwnerSettings {
+// Surcharges stored as strings in editing state so the user can
+// freely clear the field — avoids "0 stays" behaviour.
+interface ServiceLocation {
   id: string;
-  full_name: string;
-  business_name: string;
-  email: string;
-  phone: string;
-  business_address: string;
-  base_location: string;
-  service_locations: string[];
-  is_gst_enabled: boolean;
-  gst_type: string;
-  gst_number: string;
-  currency: string;
-  timezone: string;
-  reminder_days_advance: number;
-  booking_prefix: string;
+  location_name: string;
+  surcharge: string;
+  night_surcharge: string;
+  isNew?: boolean;
 }
 
-const DEFAULT: OwnerSettings = {
-  id: '', full_name: '', business_name: '', email: '',
-  phone: '', business_address: '', base_location: '',
-  service_locations: [], is_gst_enabled: false,
-  gst_type: 'Regular', gst_number: '', currency: 'INR',
-  timezone: 'Asia/Kolkata', reminder_days_advance: 7,
-  booking_prefix: 'BK',
+// ── Helpers ───────────────────────────────────────────────────
+const inputCls =
+  'w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-2.5 px-4 text-sm font-medium text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10 transition-all';
+const labelCls = 'text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider';
+
+// Parse surcharge string safely → number for DB
+const parseSurcharge = (v: string): number => {
+  const n = parseFloat(v);
+  return isNaN(n) ? 0 : n;
 };
 
-// ── Shared input styles ───────────────────────────────────────
-const inputCls = "w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-3 px-4 text-sm font-medium text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10 transition-all";
-const labelCls = "text-[11px] font-bold text-[#6c7e96] uppercase tracking-wider";
+// Display surcharge: show "—" when 0
+const displaySurcharge = (v: number) =>
+  v > 0 ? `₹${v.toFixed(2)}` : null;
 
-// ── Section card wrapper ──────────────────────────────────────
+// ── Section Wrapper ───────────────────────────────────────────
 const Section: React.FC<{
   icon: React.ReactNode;
   title: string;
   subtitle: string;
+  editing: boolean;
+  saving?: boolean;
+  onEdit: () => void;
+  onSave: () => void;
+  onCancel: () => void;
   children: React.ReactNode;
-}> = ({ icon, title, subtitle, children }) => (
+}> = ({ icon, title, subtitle, editing, saving, onEdit, onSave, onCancel, children }) => (
   <div className="bg-white rounded-[2rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
-    <div className="px-8 py-6 border-b border-[#d1d0eb]/30 flex items-center space-x-4">
-      <div className="w-10 h-10 bg-[#EEEDFA] rounded-xl flex items-center justify-center text-[#6360DF] shrink-0">
-        {icon}
+    <div className="px-8 py-5 border-b border-[#d1d0eb]/30 flex items-center justify-between">
+      <div className="flex items-center space-x-4">
+        <div className="w-10 h-10 bg-[#EEEDFA] rounded-xl flex items-center justify-center text-[#6360DF] shrink-0">
+          {icon}
+        </div>
+        <div>
+          <h3 className="text-sm font-extrabold text-[#151a3c]">{title}</h3>
+          <p className="text-xs text-[#6c7e96] font-medium mt-0.5">{subtitle}</p>
+        </div>
       </div>
-      <div>
-        <h3 className="text-sm font-extrabold text-[#151a3c]">{title}</h3>
-        <p className="text-xs text-[#6c7e96] font-medium mt-0.5">{subtitle}</p>
+      <div className="flex items-center space-x-2">
+        {editing ? (
+          <>
+            <button
+              onClick={onCancel}
+              className="flex items-center space-x-1.5 border border-[#d1d0eb] text-[#6c7e96] px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
+            >
+              <X size={12} /><span>Cancel</span>
+            </button>
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="flex items-center space-x-1.5 bg-[#6360DF] hover:bg-[#5451d0] text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md shadow-[#6360df22] transition-all disabled:opacity-60"
+            >
+              {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+              <span>{saving ? 'Saving...' : 'Save'}</span>
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={onEdit}
+            className="flex items-center space-x-1.5 border border-[#d1d0eb] text-[#6c7e96] hover:text-[#6360DF] hover:border-[#6360DF] px-4 py-2 rounded-xl text-xs font-bold transition-all"
+          >
+            <Pencil size={12} /><span>Edit</span>
+          </button>
+        )}
       </div>
     </div>
     <div className="px-8 py-7">{children}</div>
   </div>
 );
 
-// ── Save button ───────────────────────────────────────────────
-const SaveBtn: React.FC<{ saving: boolean; onClick: () => void; disabled?: boolean }> = ({ saving, onClick, disabled }) => (
-  <div className="flex justify-end mt-6">
-    <button
-      onClick={onClick}
-      disabled={saving || disabled}
-      className="flex items-center space-x-2 bg-[#6360DF] hover:bg-[#5451d0] text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-[#6360df22] transition-all disabled:opacity-60"
-    >
-      {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-      <span>{saving ? 'Saving...' : 'Save Changes'}</span>
-    </button>
-  </div>
-);
+// ── Location Autocomplete ─────────────────────────────────────
+const LocationAutocomplete: React.FC<{
+  value: string;
+  onChange: (v: string) => void;
+  onSelect?: (v: string) => void;
+  existingLocations: string[];
+  placeholder?: string;
+}> = ({ value, onChange, onSelect, existingLocations, placeholder }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const suggestions =
+    value.trim().length > 0
+      ? GOA_LOCATIONS.filter(
+          loc =>
+            loc.toLowerCase().includes(value.toLowerCase()) &&
+            !existingLocations.map(l => l.toLowerCase()).includes(loc.toLowerCase())
+        ).slice(0, 8)
+      : [];
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative w-full">
+      <input
+        className={inputCls}
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }}
+        placeholder={placeholder || 'Type a location in Goa...'}
+        autoComplete="off"
+      />
+      <AnimatePresence>
+        {open && suggestions.length > 0 && (
+          <motion.ul
+            initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="absolute z-50 w-full mt-1 bg-white border border-[#d1d0eb] rounded-xl shadow-xl overflow-hidden max-h-52 overflow-y-auto"
+          >
+            {suggestions.map(loc => (
+              <li key={loc}>
+                <button
+                  type="button"
+                  onMouseDown={e => { e.preventDefault(); onChange(loc); setOpen(false); onSelect?.(loc); }}
+                  className="w-full text-left px-4 py-2.5 text-sm font-medium text-[#151a3c] hover:bg-[#EEEDFA] hover:text-[#6360DF] flex items-center space-x-2 transition-colors"
+                >
+                  <MapPin size={12} className="text-[#6360DF] shrink-0" />
+                  <span>{loc}</span>
+                </button>
+              </li>
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
 
 // ── SettingsPage ──────────────────────────────────────────────
-const SettingsPage: React.FC = () => {
-  const [data, setData] = useState<OwnerSettings>({ ...DEFAULT });
+const Settingspage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [ownerId, setOwnerId] = useState('');
+  const [editingLocations, setEditingLocations] = useState(false);
 
-  // Per-section saving states
-  const [savingProfile,    setSavingProfile]    = useState(false);
-  const [savingBusiness,   setSavingBusiness]   = useState(false);
-  const [savingLocations,  setSavingLocations]  = useState(false);
-  const [savingGst,        setSavingGst]        = useState(false);
-  const [savingPrefs,      setSavingPrefs]      = useState(false);
+  // Locations state (surcharges as strings)
+  const [serviceLocations,     setServiceLocations]     = useState<ServiceLocation[]>([]);
+  const [serviceLocationsOrig, setServiceLocationsOrig] = useState<ServiceLocation[]>([]);
+  const [nightFrom,     setNightFrom]     = useState('');
+  const [nightTo,       setNightTo]       = useState('');
+  const [nightFromOrig, setNightFromOrig] = useState('');
+  const [nightToOrig,   setNightToOrig]   = useState('');
+  const [newLocName,    setNewLocName]    = useState('');
+  const [savingLoc,     setSavingLoc]     = useState(false);
 
-  // Service location input
-  const [newLocation, setNewLocation] = useState('');
-
-  // ── Load ──────────────────────────────────────────────────
+  // ── Load ───────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       const authUser = await getCurrentUser();
       if (!authUser) { setLoading(false); return; }
-      const { data: owner, error } = await supabase
-        .from('owners').select('*').eq('user_id', authUser.id).single();
-      if (error || !owner) { setLoading(false); return; }
+
+      const { data: owner } = await supabase
+        .from('owners')
+        .select('id, night_timing_from, night_timing_to')
+        .eq('user_id', authUser.id)
+        .single();
+      if (!owner) { setLoading(false); return; }
+
       setOwnerId(owner.id);
-      setData({
-        id:                    owner.id,
-        full_name:             owner.full_name             || '',
-        business_name:         owner.business_name         || '',
-        email:                 owner.email                 || authUser.email || '',
-        phone:                 owner.phone                 || '',
-        business_address:      owner.business_address      || '',
-        base_location:         owner.base_location         || '',
-        service_locations:     owner.service_locations     || [],
-        is_gst_enabled:        owner.is_gst_enabled        ?? false,
-        gst_type:              owner.gst_type              || 'Regular',
-        gst_number:            owner.gst_number            || '',
-        currency:              owner.currency              || 'INR',
-        timezone:              owner.timezone              || 'Asia/Kolkata',
-        reminder_days_advance: owner.reminder_days_advance ?? 7,
-        booking_prefix:        owner.booking_prefix        || 'BK',
-      });
+      const nFrom = owner.night_timing_from || '';
+      const nTo   = owner.night_timing_to   || '';
+      setNightFrom(nFrom); setNightFromOrig(nFrom);
+      setNightTo(nTo);     setNightToOrig(nTo);
+
+      const { data: locs } = await supabase
+        .from('owner_service_locations')
+        .select('id, location_name, surcharge, night_surcharge')
+        .eq('owner_id', owner.id)
+        .order('created_at', { ascending: true });
+
+      // Convert numeric DB values → strings for editing
+      const mappedLocs: ServiceLocation[] = (locs || []).map(l => ({
+        id:             l.id,
+        location_name:  l.location_name,
+        surcharge:      l.surcharge != null ? String(l.surcharge) : '',
+        night_surcharge: l.night_surcharge != null ? String(l.night_surcharge) : '',
+      }));
+      setServiceLocations(mappedLocs);
+      setServiceLocationsOrig(JSON.parse(JSON.stringify(mappedLocs)));
       setLoading(false);
     };
     load();
   }, []);
 
-  const patch = (fields: Partial<OwnerSettings>) => setData(d => ({ ...d, ...fields }));
-
-  // ── Save helpers ──────────────────────────────────────────
-  const save = async (
-    setSaving: (b: boolean) => void,
-    fields: Partial<OwnerSettings>,
-    label: string
-  ) => {
-    setSaving(true);
+  // ── Save Locations ─────────────────────────────────────────
+  const saveLocations = async () => {
+    setSavingLoc(true);
     try {
-      const { error } = await supabase.from('owners').update(fields).eq('id', ownerId);
-      if (error) { toast.error(`Failed to save ${label}: ${error.message}`); return; }
-      toast.success(`${label} saved!`);
-    } finally {
-      setSaving(false);
-    }
+      // Night timings
+      const { error: nightErr } = await supabase
+        .from('owners')
+        .update({ night_timing_from: nightFrom || null, night_timing_to: nightTo || null })
+        .eq('id', ownerId);
+      if (nightErr) { toast.error('Failed to save night timings.'); return; }
+
+      // Insert new rows (convert string → number for DB)
+      for (const loc of serviceLocations.filter(l => l.isNew)) {
+        const { error } = await supabase.from('owner_service_locations').insert({
+          owner_id:        ownerId,
+          location_name:   loc.location_name,
+          surcharge:       parseSurcharge(loc.surcharge),
+          night_surcharge: parseSurcharge(loc.night_surcharge),
+        });
+        if (error) { toast.error('Failed to add: ' + loc.location_name); return; }
+      }
+
+      // Update changed existing rows
+      for (const loc of serviceLocations.filter(l => !l.isNew)) {
+        const orig = serviceLocationsOrig.find(o => o.id === loc.id);
+        if (!orig) continue;
+        if (
+          orig.location_name   !== loc.location_name ||
+          orig.surcharge       !== loc.surcharge ||
+          orig.night_surcharge !== loc.night_surcharge
+        ) {
+          await supabase.from('owner_service_locations').update({
+            location_name:   loc.location_name,
+            surcharge:       parseSurcharge(loc.surcharge),
+            night_surcharge: parseSurcharge(loc.night_surcharge),
+          }).eq('id', loc.id);
+        }
+      }
+
+      // Delete removed rows
+      for (const orig of serviceLocationsOrig) {
+        if (!serviceLocations.find(l => l.id === orig.id)) {
+          await supabase.from('owner_service_locations').delete().eq('id', orig.id);
+        }
+      }
+
+      toast.success('Locations saved!');
+
+      // Refresh to get real DB IDs + values
+      const { data: locs } = await supabase
+        .from('owner_service_locations')
+        .select('id, location_name, surcharge, night_surcharge')
+        .eq('owner_id', ownerId)
+        .order('created_at', { ascending: true });
+      const refreshed: ServiceLocation[] = (locs || []).map(l => ({
+        id:              l.id,
+        location_name:   l.location_name,
+        surcharge:       l.surcharge != null ? String(l.surcharge) : '',
+        night_surcharge: l.night_surcharge != null ? String(l.night_surcharge) : '',
+      }));
+      setServiceLocations(refreshed);
+      setServiceLocationsOrig(JSON.parse(JSON.stringify(refreshed)));
+      setNightFromOrig(nightFrom);
+      setNightToOrig(nightTo);
+      setEditingLocations(false);
+    } finally { setSavingLoc(false); }
   };
 
-  const addLocation = () => {
-    const loc = newLocation.trim();
-    if (!loc) return;
-    if (data.service_locations.includes(loc)) {
+  const cancelLocations = () => {
+    setServiceLocations(JSON.parse(JSON.stringify(serviceLocationsOrig)));
+    setNightFrom(nightFromOrig);
+    setNightTo(nightToOrig);
+    setNewLocName('');
+    setEditingLocations(false);
+  };
+
+  const addLocationRow = (name?: string) => {
+    const locName = (name ?? newLocName).trim();
+    if (!locName) return;
+    if (serviceLocations.some(l => l.location_name.toLowerCase() === locName.toLowerCase())) {
       toast.error('Location already added.'); return;
     }
-    patch({ service_locations: [...data.service_locations, loc] });
-    setNewLocation('');
+    setServiceLocations(prev => [
+      ...prev,
+      { id: '__new__' + Date.now(), location_name: locName, surcharge: '', night_surcharge: '', isNew: true },
+    ]);
+    setNewLocName('');
   };
 
-  const removeLocation = (loc: string) => {
-    patch({ service_locations: data.service_locations.filter(l => l !== loc) });
-  };
+  const removeLocationRow = (id: string) =>
+    setServiceLocations(prev => prev.filter(l => l.id !== id));
+
+  // Update a surcharge field — plain string, no parsing
+  const updateSurcharge = (id: string, field: 'surcharge' | 'night_surcharge', value: string) =>
+    setServiceLocations(prev =>
+      prev.map(l => l.id === id ? { ...l, [field]: value } : l)
+    );
+
+  // ── Time formatter ─────────────────────────────────────────
+  const fmtTime = (t: string) =>
+    t ? new Date('1970-01-01T' + t).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
 
   if (loading) return (
     <div className="flex items-center justify-center py-32 text-[#6c7e96]">
@@ -165,280 +338,174 @@ const SettingsPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12">
-
-      {/* ── Page header ── */}
       <div>
         <h2 className="text-[24px] font-extrabold text-[#151a3c] tracking-tight">Settings</h2>
-        <p className="text-[#6c7e96] text-sm font-medium mt-1">Manage your business profile and preferences</p>
+        <p className="text-[#6c7e96] text-sm font-medium mt-1">Manage your service areas and night timings</p>
       </div>
 
-      {/* ── 1. Profile ── */}
-      <Section icon={<User size={18} />} title="Personal Profile" subtitle="Your name, contact details and login email">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div className="space-y-1.5">
-            <label className={labelCls}>Full Name</label>
-            <input className={inputCls} value={data.full_name}
-              onChange={e => patch({ full_name: e.target.value })} placeholder="Anjali Rodrigues" />
-          </div>
-          <div className="space-y-1.5">
-            <label className={labelCls}>Email</label>
-            <div className="relative">
-              <Mail size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6c7e96]" />
-              <input className={inputCls + ' pl-10'} value={data.email}
-                onChange={e => patch({ email: e.target.value })} placeholder="you@example.com" />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <label className={labelCls}>Phone</label>
-            <div className="relative">
-              <Phone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6c7e96]" />
-              <input className={inputCls + ' pl-10'} value={data.phone}
-                onChange={e => patch({ phone: e.target.value })} placeholder="+91 98765 43210" />
-            </div>
-          </div>
+      {/* ── Locations Card ────────────────────────────────────── */}
+      <Section
+        icon={<MapPin size={18} />}
+        title="Locations"
+        subtitle="Service areas, surcharges and night timings for your fleet"
+        editing={editingLocations}
+        saving={savingLoc}
+        onEdit={() => setEditingLocations(true)}
+        onSave={saveLocations}
+        onCancel={cancelLocations}
+      >
+        {/* Table */}
+        <div className="overflow-x-auto rounded-xl border border-[#d1d0eb]/40">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-[#F8F9FA] text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase border-b border-[#d1d0eb]/40">
+                <th className="px-5 py-3">Location Name</th>
+                <th className="px-5 py-3">Surcharge (₹)</th>
+                <th className="px-5 py-3">Night Surcharge (₹)</th>
+                {editingLocations && <th className="px-4 py-3 w-10" />}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#d1d0eb]/20">
+              {serviceLocations.length === 0 ? (
+                <tr>
+                  <td colSpan={editingLocations ? 4 : 3} className="px-5 py-10 text-center text-xs text-[#6c7e96] font-medium">
+                    No service locations added yet.{' '}
+                    {!editingLocations && (
+                      <span className="text-[#6360DF] font-bold cursor-pointer" onClick={() => setEditingLocations(true)}>
+                        Click Edit to add.
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ) : serviceLocations.map(loc => (
+                <tr key={loc.id} className="hover:bg-[#fafafa] transition-colors">
+                  {/* Location name */}
+                  <td className="px-5 py-3">
+                    {editingLocations ? (
+                      <LocationAutocomplete
+                        value={loc.location_name}
+                        onChange={v => setServiceLocations(prev => prev.map(l => l.id === loc.id ? { ...l, location_name: v } : l))}
+                        existingLocations={serviceLocations.filter(l => l.id !== loc.id).map(l => l.location_name)}
+                      />
+                    ) : (
+                      <div className="flex items-center space-x-2">
+                        <MapPin size={11} className="text-[#6360DF] shrink-0" />
+                        <span className="text-sm font-bold text-[#151a3c]">{loc.location_name}</span>
+                      </div>
+                    )}
+                  </td>
+
+                  {/* Surcharge */}
+                  <td className="px-5 py-3">
+                    {editingLocations ? (
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="0"
+                        value={loc.surcharge}
+                        onChange={e => updateSurcharge(loc.id, 'surcharge', e.target.value)}
+                        className={inputCls + ' w-32'}
+                      />
+                    ) : (
+                      <span className="text-sm font-bold text-[#151a3c]">
+                        {displaySurcharge(parseSurcharge(loc.surcharge)) ?? (
+                          <span className="text-[#6c7e96] font-normal">—</span>
+                        )}
+                      </span>
+                    )}
+                  </td>
+
+                  {/* Night Surcharge */}
+                  <td className="px-5 py-3">
+                    {editingLocations ? (
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="0"
+                        value={loc.night_surcharge}
+                        onChange={e => updateSurcharge(loc.id, 'night_surcharge', e.target.value)}
+                        className={inputCls + ' w-32'}
+                      />
+                    ) : (
+                      <span className="text-sm font-bold text-[#151a3c]">
+                        {displaySurcharge(parseSurcharge(loc.night_surcharge)) ?? (
+                          <span className="text-[#6c7e96] font-normal">—</span>
+                        )}
+                      </span>
+                    )}
+                  </td>
+
+                  {/* Delete button */}
+                  {editingLocations && (
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => removeLocationRow(loc.id)}
+                        className="p-1.5 text-[#cbd5e1] hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <SaveBtn saving={savingProfile} onClick={() =>
-          save(setSavingProfile, {
-            full_name: data.full_name, email: data.email, phone: data.phone,
-          }, 'Profile')
-        } />
-      </Section>
 
-      {/* ── 2. Business ── */}
-      <Section icon={<Building2 size={18} />} title="Business Details" subtitle="Your company name and address shown on invoices and handover documents">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div className="space-y-1.5">
-            <label className={labelCls}>Business Name</label>
-            <input className={inputCls} value={data.business_name}
-              onChange={e => patch({ business_name: e.target.value })} placeholder="e.g. Rodrigues Car Rentals" />
-          </div>
-          <div className="space-y-1.5 md:col-span-2">
-            <label className={labelCls}>Business Address</label>
-            <textarea className={inputCls + ' resize-none h-20'} value={data.business_address}
-              onChange={e => patch({ business_address: e.target.value })}
-              placeholder="Full address with city, state and PIN" />
-          </div>
-          <div className="space-y-1.5">
-            <label className={labelCls}>Booking ID Prefix</label>
-            <div className="relative">
-              <Tag size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6c7e96]" />
-              <input className={inputCls + ' pl-10 uppercase'} value={data.booking_prefix}
-                maxLength={4}
-                onChange={e => patch({ booking_prefix: e.target.value.toUpperCase() })}
-                placeholder="BK" />
-            </div>
-            <p className="text-[11px] text-[#6c7e96] font-medium">Booking IDs will appear as {data.booking_prefix || 'BK'}-00001</p>
-          </div>
-        </div>
-        <SaveBtn saving={savingBusiness} onClick={() =>
-          save(setSavingBusiness, {
-            business_name: data.business_name,
-            business_address: data.business_address,
-            booking_prefix: data.booking_prefix,
-          }, 'Business details')
-        } />
-      </Section>
-
-      {/* ── 3. Locations ── */}
-      <Section icon={<MapPin size={18} />} title="Locations" subtitle="Base location and service areas for your fleet">
-        <div className="space-y-5">
-          <div className="space-y-1.5">
-            <label className={labelCls}>Base Location (HQ)</label>
-            <div className="relative">
-              <MapPin size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6c7e96]" />
-              <input className={inputCls + ' pl-10'} value={data.base_location}
-                onChange={e => patch({ base_location: e.target.value })} placeholder="e.g. Panaji, Goa" />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className={labelCls}>Service Locations</label>
-            <div className="flex gap-2">
-              <input
-                className={inputCls + ' flex-1'}
-                value={newLocation}
-                onChange={e => setNewLocation(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addLocation(); } }}
-                placeholder="e.g. Calangute, Margao..."
-              />
-              <button
-                type="button"
-                onClick={addLocation}
-                className="flex items-center space-x-1.5 bg-[#6360DF] hover:bg-[#5451d0] text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shrink-0"
-              >
-                <Plus size={14} /><span>Add</span>
-              </button>
-            </div>
-            {data.service_locations.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-2">
-                {data.service_locations.map(loc => (
-                  <span key={loc} className="flex items-center space-x-1.5 bg-[#EEEDFA] text-[#6360DF] px-3 py-1.5 rounded-full text-xs font-bold">
-                    <MapPin size={11} />
-                    <span>{loc}</span>
-                    <button type="button" onClick={() => removeLocation(loc)}
-                      className="ml-1 text-[#6360DF]/60 hover:text-[#6360DF] transition-colors">
-                      <X size={11} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        <SaveBtn saving={savingLocations} onClick={() =>
-          save(setSavingLocations, {
-            base_location: data.base_location,
-            service_locations: data.service_locations,
-          }, 'Locations')
-        } />
-      </Section>
-
-      {/* ── 4. GST ── */}
-      <Section icon={<Receipt size={18} />} title="GST & Taxation" subtitle="GST settings applied to invoices and bookings">
-        <div className="space-y-5">
-          {/* GST toggle */}
-          <div className="flex items-center justify-between bg-[#F8F9FA] rounded-2xl px-5 py-4 border border-[#d1d0eb]">
-            <div>
-              <p className="text-sm font-bold text-[#151a3c]">GST Enabled</p>
-              <p className="text-[11px] text-[#6c7e96] font-medium mt-0.5">Apply GST on all bookings and invoices</p>
-            </div>
+        {/* Add row — edit mode only */}
+        {editingLocations && (
+          <div className="flex items-center gap-2 mt-3">
+            <LocationAutocomplete
+              value={newLocName}
+              onChange={setNewLocName}
+              onSelect={name => addLocationRow(name)}
+              existingLocations={serviceLocations.map(l => l.location_name)}
+              placeholder="Search Goa locations to add..."
+            />
             <button
-              type="button"
-              onClick={() => patch({ is_gst_enabled: !data.is_gst_enabled })}
-              className={`relative w-11 h-6 rounded-full transition-colors duration-300 shrink-0 ${data.is_gst_enabled ? 'bg-[#6360DF]' : 'bg-slate-300'}`}>
-              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all duration-300 ${data.is_gst_enabled ? 'left-6' : 'left-1'}`} />
+              onClick={() => addLocationRow()}
+              className="flex items-center space-x-1.5 bg-[#6360DF] hover:bg-[#5451d0] text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0"
+            >
+              <Plus size={13} /><span>Add</span>
             </button>
           </div>
+        )}
 
-          <AnimatePresence>
-            {data.is_gst_enabled && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                className="grid grid-cols-1 md:grid-cols-2 gap-5 overflow-hidden">
-                <div className="space-y-1.5">
-                  <label className={labelCls}>GST Type</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['Regular', 'Composition', 'Exempted'].map(t => (
-                      <button key={t} type="button" onClick={() => patch({ gst_type: t })}
-                        className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${
-                          data.gst_type === t
-                            ? 'bg-[#EEEDFA] border-[#6360DF] text-[#6360DF]'
-                            : 'bg-[#F8F9FA] border-[#d1d0eb] text-[#6c7e96]'
-                        }`}>{t}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelCls}>GSTIN</label>
-                  <input className={inputCls + ' uppercase'} value={data.gst_number}
-                    onChange={e => patch({ gst_number: e.target.value.toUpperCase() })}
-                    placeholder="22AAAAA0000A1Z5" maxLength={15} />
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-        <SaveBtn saving={savingGst} onClick={() =>
-          save(setSavingGst, {
-            is_gst_enabled: data.is_gst_enabled,
-            gst_type: data.gst_type,
-            gst_number: data.gst_number,
-          }, 'GST settings')
-        } />
-      </Section>
-
-      {/* ── 5. Preferences ── */}
-      <Section icon={<Globe size={18} />} title="App Preferences" subtitle="Currency, timezone and reminder defaults">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-
-          {/* Currency */}
-          <div className="space-y-1.5">
-            <label className={labelCls}>Currency</label>
-            <div className="grid grid-cols-3 gap-2">
-              {['INR', 'USD', 'EUR'].map(c => (
-                <button key={c} type="button" onClick={() => patch({ currency: c })}
-                  className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${
-                    data.currency === c
-                      ? 'bg-[#EEEDFA] border-[#6360DF] text-[#6360DF]'
-                      : 'bg-[#F8F9FA] border-[#d1d0eb] text-[#6c7e96]'
-                  }`}>{c}</button>
-              ))}
+        {/* Night Timings */}
+        <div className="mt-6 pt-5 border-t border-[#d1d0eb]/30">
+          <div className="flex items-center space-x-2 mb-4">
+            <Clock size={14} className="text-[#6360DF]" />
+            <p className={labelCls}>Night Timings</p>
+          </div>
+          <div className="grid grid-cols-2 gap-4 max-w-xs">
+            <div className="space-y-1.5">
+              <label className={labelCls}>From</label>
+              {editingLocations ? (
+                <input type="time" value={nightFrom} onChange={e => setNightFrom(e.target.value)} className={inputCls} />
+              ) : (
+                <p className="text-sm font-bold text-[#151a3c]">{fmtTime(nightFrom)}</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>To</label>
+              {editingLocations ? (
+                <input type="time" value={nightTo} onChange={e => setNightTo(e.target.value)} className={inputCls} />
+              ) : (
+                <p className="text-sm font-bold text-[#151a3c]">{fmtTime(nightTo)}</p>
+              )}
             </div>
           </div>
-
-          {/* Timezone */}
-          <div className="space-y-1.5">
-            <label className={labelCls}>Timezone</label>
-            <div className="relative">
-              <Clock size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6c7e96]" />
-              <select
-                value={data.timezone}
-                onChange={e => patch({ timezone: e.target.value })}
-                className={inputCls + ' pl-10 appearance-none cursor-pointer'}
-              >
-                {[
-                  'Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore',
-                  'Europe/London', 'Europe/Paris', 'America/New_York',
-                  'America/Los_Angeles', 'Australia/Sydney',
-                ].map(tz => <option key={tz} value={tz}>{tz}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {/* Reminder advance days */}
-          <div className="space-y-1.5">
-            <label className={labelCls}>Reminder Alert (days in advance)</label>
-            <div className="flex items-center space-x-3">
-              {[3, 7, 14, 30].map(d => (
-                <button key={d} type="button" onClick={() => patch({ reminder_days_advance: d })}
-                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all ${
-                    data.reminder_days_advance === d
-                      ? 'bg-[#EEEDFA] border-[#6360DF] text-[#6360DF]'
-                      : 'bg-[#F8F9FA] border-[#d1d0eb] text-[#6c7e96]'
-                  }`}>{d}d</button>
-              ))}
-            </div>
-            <p className="text-[11px] text-[#6c7e96] font-medium">
-              Reminders will alert you {data.reminder_days_advance} days before expiry
+          {editingLocations && (
+            <p className="text-[11px] text-[#6c7e96] font-medium mt-2">
+              Night surcharge applies to bookings that include any hours between these times.
             </p>
-          </div>
-        </div>
-        <SaveBtn saving={savingPrefs} onClick={() =>
-          save(setSavingPrefs, {
-            currency: data.currency,
-            timezone: data.timezone,
-            reminder_days_advance: data.reminder_days_advance,
-          }, 'Preferences')
-        } />
-      </Section>
-
-      {/* ── 6. Account (read-only info) ── */}
-      <Section icon={<Shield size={18} />} title="Account & Security" subtitle="Your login account information">
-        <div className="space-y-3">
-          <div className="flex items-center justify-between bg-[#F8F9FA] rounded-xl px-5 py-3.5 border border-[#d1d0eb]">
-            <div>
-              <p className="text-xs font-bold text-[#6c7e96] uppercase tracking-wider">Login Email</p>
-              <p className="text-sm font-bold text-[#151a3c] mt-0.5">{data.email || '—'}</p>
-            </div>
-            <span className="text-[10px] font-extrabold text-[#6360DF] bg-[#EEEDFA] px-3 py-1 rounded-full tracking-widest uppercase">Fleet Owner</span>
-          </div>
-          <div className="flex items-center justify-between bg-[#F8F9FA] rounded-xl px-5 py-3.5 border border-[#d1d0eb]">
-            <div>
-              <p className="text-xs font-bold text-[#6c7e96] uppercase tracking-wider">Password</p>
-              <p className="text-sm font-medium text-[#6c7e96] mt-0.5">To change your password, use the "Forgot Password" option at login</p>
-            </div>
-          </div>
-          <div className="bg-[#FFF8E7] border border-[#FCD34D]/40 rounded-xl px-5 py-3.5 flex items-start space-x-3">
-            <AlertCircle size={15} className="text-[#D97706] mt-0.5 shrink-0" />
-            <p className="text-xs text-[#92400E] font-medium">
-              Staff & manager login access is managed under the <span className="font-extrabold">Users</span> section.
-              Each staff member gets their own credentials and page-level permissions.
-            </p>
-          </div>
+          )}
         </div>
       </Section>
-
     </div>
   );
 };
 
-export default SettingsPage;
+export default Settingspage;
