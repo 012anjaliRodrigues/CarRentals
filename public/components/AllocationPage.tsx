@@ -36,6 +36,10 @@ interface AllocationRow {
 interface Driver { id: string; name: string; }
 interface AvailableVehicle { id: string; registration: string; name: string; }
 
+// ── Per-row busy sets ─────────────────────────────────────────
+// busyMap[detailId] = { driverIds: Set, vehicleIds: Set }
+interface BusySet { driverIds: Set<string>; vehicleIds: Set<string>; }
+
 // ── Allocation Detail Popup ───────────────────────────────────
 interface AllocationDetailPopupProps {
   row: AllocationRow;
@@ -205,7 +209,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ open, filters, onChange, onCl
             transition={{ duration: 0.18 }}
             className="absolute right-0 top-full mt-2 z-[100] w-[520px] bg-white rounded-[1.5rem] shadow-2xl border border-[#d1d0eb]/40 overflow-hidden"
           >
-            {/* Panel header */}
             <div className="px-6 py-4 border-b border-[#d1d0eb]/30 flex items-center justify-between bg-[#FAFAFA]">
               <div className="flex items-center space-x-2">
                 <SlidersHorizontal size={16} className="text-[#6360DF]" />
@@ -226,10 +229,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ open, filters, onChange, onCl
                 </button>
               </div>
             </div>
-
-            {/* Filter grid */}
             <div className="p-6 grid grid-cols-2 gap-5">
-              {/* Vehicle */}
               <div className="space-y-2">
                 <label className="text-[10px] font-extrabold text-[#6c7e96] uppercase tracking-widest flex items-center space-x-1.5">
                   <Car size={11} className="text-[#6360DF]" /><span>Vehicle</span>
@@ -243,8 +243,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ open, filters, onChange, onCl
                   <ChevronDown size={11} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
                 </div>
               </div>
-
-              {/* Location Type */}
               <div className="space-y-2">
                 <label className="text-[10px] font-extrabold text-[#6c7e96] uppercase tracking-widest flex items-center space-x-1.5">
                   <MapPin size={11} className="text-[#6360DF]" /><span>Location Type</span>
@@ -264,8 +262,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ open, filters, onChange, onCl
                   ))}
                 </div>
               </div>
-
-              {/* Location */}
               <div className="space-y-2">
                 <label className="text-[10px] font-extrabold text-[#6c7e96] uppercase tracking-widest flex items-center space-x-1.5">
                   <MapPin size={11} className="text-[#6360DF]" /><span>Location</span>
@@ -279,8 +275,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ open, filters, onChange, onCl
                   <ChevronDown size={11} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
                 </div>
               </div>
-
-              {/* Driver */}
               <div className="space-y-2">
                 <label className="text-[10px] font-extrabold text-[#6c7e96] uppercase tracking-widest flex items-center space-x-1.5">
                   <User size={11} className="text-[#6360DF]" /><span>Driver</span>
@@ -295,8 +289,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ open, filters, onChange, onCl
                 </div>
               </div>
             </div>
-
-            {/* Active chips */}
             {activeCount > 0 && (
               <div className="px-6 pb-5 flex flex-wrap gap-2 border-t border-[#d1d0eb]/20 pt-4">
                 {filters.vehicle && (
@@ -350,6 +342,10 @@ const AllocationPage: React.FC = () => {
   const [filters, setFilters] = useState<FilterState>({ vehicle: '', locationType: '', location: '', driver: '' });
   const filterRef = useRef<HTMLDivElement>(null);
 
+  // ── Per-row busy driver/vehicle sets ──────────────────────
+  // Key: detailId, Value: { driverIds, vehicleIds } that are busy for that row's booking range
+  const [busyMap, setBusyMap] = useState<Record<string, BusySet>>({});
+
   const loadData = async (date: string) => {
     setLoading(true);
     const authUser = await getCurrentUser();
@@ -361,7 +357,9 @@ const AllocationPage: React.FC = () => {
     const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
     const dayEnd   = new Date(date); dayEnd.setHours(23, 59, 59, 999);
 
-    const [bookingDetailsRes, allocationsRes, driversRes, vehiclesRes] = await Promise.all([
+    // ── Fetch all allocations with their booking date ranges ──
+    // We need pickup_at + drop_at for every confirmed allocation to check overlaps
+    const [bookingDetailsRes, allocationsRes, driversRes, vehiclesRes, allAllocWithDatesRes] = await Promise.all([
       supabase
         .from('booking_details')
         .select(`
@@ -373,12 +371,29 @@ const AllocationPage: React.FC = () => {
         .in('bookings.status', ['BOOKED', 'ONGOING'])
         .gte('bookings.pickup_at', dayStart.toISOString())
         .lte('bookings.pickup_at', dayEnd.toISOString()),
+
       supabase
         .from('allocations')
         .select('id, booking_detail_id, driver_id, type, is_confirmed, vehicle_id, vehicles(registration_no), drivers(full_name)')
         .eq('owner_id', ownerRow.id),
+
       supabase.from('drivers').select('id, full_name').eq('owner_id', ownerRow.id).eq('status', 'active'),
+
       supabase.from('vehicles').select('id, registration_no, models(brand, name)').eq('owner_id', ownerRow.id).eq('status', 'available'),
+
+      // All confirmed allocations across all bookings — used to compute busy sets
+      supabase
+        .from('allocations')
+        .select(`
+          id, driver_id, vehicle_id, booking_detail_id,
+          booking_details!inner(
+            booking_id,
+            bookings!inner(id, pickup_at, drop_at, status, owner_id)
+          )
+        `)
+        .eq('owner_id', ownerRow.id)
+        .eq('is_confirmed', true)
+        .in('booking_details.bookings.status', ['BOOKED', 'ONGOING']),
     ]);
 
     const allAllocations = (allocationsRes.data as any[]) || [];
@@ -424,6 +439,41 @@ const AllocationPage: React.FC = () => {
       return 0;
     });
 
+    // ── Build busyMap ─────────────────────────────────────────
+    // For each row, find which driver/vehicle IDs are already allocated
+    // to a DIFFERENT booking that overlaps this row's pickup_at → drop_at range.
+    const allAllocWithDates = (allAllocWithDatesRes.data as any[]) || [];
+
+    const newBusyMap: Record<string, BusySet> = {};
+
+    mapped.forEach(row => {
+      const rowPickup = row.pickupAt;
+      const rowDrop   = row.dropAt;
+
+      const busyDriverIds  = new Set<string>();
+      const busyVehicleIds = new Set<string>();
+
+      allAllocWithDates.forEach((a: any) => {
+        // Skip allocations belonging to this same booking
+        const aBookingId = a.booking_details?.bookings?.id;
+        if (aBookingId === row.bookingId) return;
+
+        const aPickup = a.booking_details?.bookings?.pickup_at;
+        const aDrop   = a.booking_details?.bookings?.drop_at;
+        if (!aPickup || !aDrop) return;
+
+        // Overlap check: existing range overlaps new range
+        const overlaps = aPickup < rowDrop && aDrop > rowPickup;
+        if (!overlaps) return;
+
+        if (a.driver_id)  busyDriverIds.add(a.driver_id);
+        if (a.vehicle_id) busyVehicleIds.add(a.vehicle_id);
+      });
+
+      newBusyMap[row.detailId] = { driverIds: busyDriverIds, vehicleIds: busyVehicleIds };
+    });
+
+    setBusyMap(newBusyMap);
     setRows(mapped);
     setDrivers(((driversRes.data as any[]) || []).map((d: any) => ({ id: d.id, name: d.full_name })));
     setAvailableVehicles(((vehiclesRes.data as any[]) || []).map((v: any) => ({
@@ -454,6 +504,20 @@ const AllocationPage: React.FC = () => {
     const isoDateTime = isDrop ? row.dropAt : row.pickupAt;
     const location = isDrop ? row.dropLocation : row.pickupLocation;
     const vehicleId = isDrop ? (selectedVehicles[row.detailId] || row.allocatedVehicleId || null) : null;
+
+    // ── Guard: block saving if selected driver/vehicle is busy ─
+    const busy = busyMap[row.detailId];
+    if (busy) {
+      if (busy.driverIds.has(driverId)) {
+        toast.error('This driver is already allocated to another booking in the same time period.');
+        return;
+      }
+      if (vehicleId && busy.vehicleIds.has(vehicleId)) {
+        toast.error('This vehicle is already allocated to another booking in the same time period.');
+        return;
+      }
+    }
+
     setSavingId(row.detailId);
     try {
       if (row.allocationId) {
@@ -515,22 +579,17 @@ const AllocationPage: React.FC = () => {
             <p className="text-[#6c7e96] text-sm font-medium mt-1 opacity-80">Assign drivers to vehicles for upcoming trips</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            {/* Search */}
             <div className="relative group min-w-[200px]">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#cbd5e1] w-4 h-4 group-focus-within:text-[#6360DF] transition-colors" />
               <input type="text" placeholder="Search driver or vehicle..." value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 className="w-full bg-white border border-[#d1d0eb] rounded-full py-2.5 pl-11 pr-4 text-sm font-medium outline-none focus:ring-2 focus:ring-[#6360DF]/10 focus:border-[#6360DF] transition-all" />
             </div>
-
-            {/* Date picker */}
             <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb]">
               <Calendar size={15} className="text-[#6c7e96] shrink-0" />
               <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
                 className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]" />
             </div>
-
-            {/* Filter button */}
             <div className="relative" ref={filterRef}>
               <button onClick={() => setFilterOpen(o => !o)}
                 className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl border text-sm font-bold transition-all ${
@@ -550,8 +609,6 @@ const AllocationPage: React.FC = () => {
                 onClear={() => setFilters({ vehicle: '', locationType: '', location: '', driver: '' })}
                 onClose={() => setFilterOpen(false)} rows={rows} drivers={drivers} />
             </div>
-
-            {/* Unallocated badge */}
             {unallocatedCount > 0 && (
               <div className="flex items-center space-x-2 bg-red-50 border border-red-200 px-4 py-2.5 rounded-xl">
                 <AlertTriangle size={14} className="text-red-500" />
@@ -630,6 +687,7 @@ const AllocationPage: React.FC = () => {
                     const rowTime = isDrop ? row.dropAt : row.pickupAt;
                     const rowLocation = isDrop ? row.dropLocation : row.pickupLocation;
                     const displayVehicle = getDisplayVehicle(row);
+                    const busy = busyMap[row.detailId] ?? { driverIds: new Set(), vehicleIds: new Set() };
 
                     return (
                       <motion.tr key={row.detailId} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
@@ -666,7 +724,7 @@ const AllocationPage: React.FC = () => {
                           </span>
                         </td>
 
-                        {/* Location — from DB */}
+                        {/* Location */}
                         <td className="py-4 px-4 whitespace-nowrap">
                           <div className="flex items-center space-x-1.5">
                             <MapPin size={11} className="text-[#6360DF] shrink-0" />
@@ -696,7 +754,19 @@ const AllocationPage: React.FC = () => {
                                   }}
                                   className={`appearance-none pr-8 pl-3 py-2 rounded-lg text-xs font-bold outline-none border cursor-pointer w-[150px] ${isUnallocated ? 'bg-red-50 border-red-200 text-[#151a3c] focus:border-red-400' : 'bg-[#f8f7ff] border-[#d1d0eb] text-[#151a3c] focus:border-[#6360DF]'}`}>
                                   <option value="">Select vehicle...</option>
-                                  {availableVehicles.map(v => <option key={v.id} value={v.id}>{v.registration}</option>)}
+                                  {availableVehicles.map(v => {
+                                    const isBusy = busy.vehicleIds.has(v.id);
+                                    return (
+                                      <option
+                                        key={v.id}
+                                        value={v.id}
+                                        disabled={isBusy}
+                                        style={isBusy ? { color: '#9ca3af' } : undefined}
+                                      >
+                                        {v.registration}{isBusy ? ' — Busy' : ''}
+                                      </option>
+                                    );
+                                  })}
                                 </select>
                                 <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
                               </div>
@@ -720,7 +790,19 @@ const AllocationPage: React.FC = () => {
                                 onChange={e => setSelectedDrivers(prev => ({ ...prev, [row.detailId]: e.target.value }))}
                                 className={`appearance-none pr-8 pl-3 py-2 rounded-lg text-xs font-bold outline-none border cursor-pointer w-[150px] ${isUnallocated ? 'bg-red-50 border-red-200 text-[#151a3c] focus:border-red-400' : 'bg-[#f8f7ff] border-[#d1d0eb] text-[#151a3c] focus:border-[#6360DF]'}`}>
                                 <option value="">Select driver...</option>
-                                {drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                {drivers.map(d => {
+                                  const isBusy = busy.driverIds.has(d.id);
+                                  return (
+                                    <option
+                                      key={d.id}
+                                      value={d.id}
+                                      disabled={isBusy}
+                                      style={isBusy ? { color: '#9ca3af' } : undefined}
+                                    >
+                                      {d.name}{isBusy ? ' — Busy' : ''}
+                                    </option>
+                                  );
+                                })}
                               </select>
                               <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
                             </div>

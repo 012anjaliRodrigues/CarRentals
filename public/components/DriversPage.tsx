@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, UserPlus, Eye, Pencil, Trash2, ChevronDown,
   Loader2, ArrowLeft, Phone, CreditCard, Car,
-  MapPin, Clock, Calendar, CheckCircle2, X, Filter, SlidersHorizontal
+  MapPin, Clock, Calendar, CheckCircle2, X, Filter, SlidersHorizontal,
+  RefreshCw, Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -62,6 +63,14 @@ interface DriverDetail {
   driverStatus: 'On Trip' | 'Allocated' | 'Available' | 'Inactive';
 }
 
+// ── Edit form state ───────────────────────────────────────────
+interface EditForm {
+  full_name: string;
+  phone: string;
+  license_no: string;
+  current_location: string;
+}
+
 const AVATAR_COLORS = [
   { bg: '#D1FAE5', text: '#059669' },
   { bg: '#EEEDFA', text: '#6360DF' },
@@ -79,6 +88,9 @@ const getStatusStyle = (s: DriverRow['driverStatus']) => {
     case 'Inactive':  return { bg: 'bg-slate-100',  text: 'text-slate-500',  dot: 'bg-slate-400' };
   }
 };
+
+const inputCls = 'w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-2 px-3 text-sm font-medium text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10 transition-all';
+const labelCls = 'text-[10px] font-bold text-[#6c7e96] uppercase tracking-wider';
 
 // ── DriverProfilePage ─────────────────────────────────────────
 const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({ driverId, onBack }) => {
@@ -176,10 +188,8 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
 
   useEffect(() => { loadDriverProfile(selectedDate); }, [driverId, selectedDate]);
 
-  // Computed values (logic kept, Total Trips not displayed)
   const todaysAllocCount  = allocations.length;
   const completedTrips    = tripHistory.filter(t => t.bookingStatus === 'COMPLETED').length;
-  const totalTrips        = tripHistory.length; // kept in code, not shown
 
   const bookingStatusBadge = (s: string) => {
     switch (s) {
@@ -207,21 +217,15 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
         <span className="text-lg">Back to Drivers</span>
       </button>
 
-      {/* ── Profile banner — stats embedded inside ── */}
       {driver && (
         <div className="bg-white rounded-[2.5rem] shadow-sm border border-[#d1d0eb]/30 p-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-
-            {/* Left: avatar + name + contact */}
             <div className="flex items-center space-x-6">
-              <div
-                className="w-20 h-20 rounded-3xl flex items-center justify-center text-2xl font-extrabold shrink-0"
-                style={{ backgroundColor: driver.avatarColor, color: driver.avatarTextColor }}
-              >
+              <div className="w-20 h-20 rounded-3xl flex items-center justify-center text-2xl font-extrabold shrink-0"
+                style={{ backgroundColor: driver.avatarColor, color: driver.avatarTextColor }}>
                 {driver.initials}
               </div>
               <div className="flex-1 min-w-0">
-                {/* Name + status badge inline */}
                 <div className="flex flex-wrap items-center gap-3">
                   <h2 className="text-2xl font-extrabold text-[#151a3c] tracking-tight">{driver.name}</h2>
                   {statusStyle && (
@@ -244,36 +248,24 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
                 </div>
               </div>
             </div>
-
-            {/* Right: Today's Allocations + Completed Trips — inside the card */}
             <div className="flex items-center gap-4 shrink-0">
-              {/* Today's Allocations */}
               <div className="flex flex-col items-center bg-blue-50 rounded-2xl px-6 py-4 min-w-[110px]">
                 <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest whitespace-nowrap">Today's</span>
                 <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest whitespace-nowrap">Allocations</span>
                 <span className="text-3xl font-black text-blue-600 mt-0.5">{todaysAllocCount}</span>
-
               </div>
-
-              {/* Divider */}
               <div className="w-px h-12 bg-[#d1d0eb]/40 hidden sm:block" />
-
-              {/* Completed Trips */}
               <div className="flex flex-col items-center bg-green-50 rounded-2xl px-6 py-4 min-w-[110px]">
                 <span className="text-[10px] font-bold text-green-400 uppercase tracking-widest whitespace-nowrap">Completed</span>
                 <span className="text-[10px] font-bold text-green-400 uppercase tracking-widest whitespace-nowrap">Trips</span>
                 <span className="text-3xl font-black text-green-600 mt-0.5">{completedTrips}</span>
-
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Stat cards row — hidden, logic kept above ── */}
-      {/* totalTrips is computed but not rendered */}
-
-      {/* ── Daily Allocations ── */}
+      {/* Daily Allocations */}
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
         <div className="px-8 py-6 border-b border-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -342,7 +334,7 @@ const DriverProfilePage: React.FC<{ driverId: string; onBack: () => void }> = ({
         </div>
       </div>
 
-      {/* ── Trip History ── */}
+      {/* Trip History */}
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-[#d1d0eb]/30 overflow-hidden">
         <div className="px-8 py-6 border-b border-slate-50">
           <h3 className="text-lg font-extrabold text-[#151a3c]">Trip History</h3>
@@ -411,34 +403,42 @@ const DriversPage: React.FC = () => {
   const [selectedDriverId, setSelectedDriverId] = useState('');
   const [driversData, setDriversData] = useState<DriverRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  // Selective date — defaults to today
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({ full_name: '', phone: '', license_no: '', current_location: '' });
+  const [savingEdit, setSavingEdit] = useState(false);
 
-  // Filter panel
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [showFilters, setShowFilters] = useState(false);
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterLocationType, setFilterLocationType] = useState('All');
+  const [ownerId, setOwnerId] = useState('');
 
-  const loadDrivers = async (date: string) => {
-    setLoading(true);
+  const loadDrivers = async (date: string, silent = false) => {
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+
     const authUser = await getCurrentUser();
-    if (!authUser) { setLoading(false); return; }
+    if (!authUser) { setLoading(false); setRefreshing(false); return; }
     const { data: ownerRow } = await supabase.from('owners').select('id').eq('user_id', authUser.id).single();
-    if (!ownerRow) { setLoading(false); return; }
+    if (!ownerRow) { setLoading(false); setRefreshing(false); return; }
+    setOwnerId(ownerRow.id);
 
     const { data: drivers, error } = await supabase
       .from('drivers')
       .select('id, full_name, phone, license_no, current_location, status')
       .eq('owner_id', ownerRow.id);
 
-    if (error) { toast.error('Failed to load drivers.'); setLoading(false); return; }
+    if (error) { toast.error('Failed to load drivers.'); setLoading(false); setRefreshing(false); return; }
 
-    const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
-    const dayEnd   = new Date(date); dayEnd.setHours(23, 59, 59, 999);
-
+    // ── Fix: fetch allocations whose booking OVERLAPS the selected date ──
+    // A driver is "on booking" if the booking's pickup_at ≤ selectedDate ≤ drop_at
+    // We do this by fetching all confirmed allocations and joining booking dates,
+    // then filtering client-side for the date range overlap.
     const { data: allocations } = await supabase
       .from('allocations')
       .select(`
@@ -449,29 +449,40 @@ const DriversPage: React.FC = () => {
         )
       `)
       .eq('owner_id', ownerRow.id)
-      .gte('date_time', dayStart.toISOString())
-      .lte('date_time', dayEnd.toISOString())
+      .eq('is_confirmed', true)
+      .in('booking_details.bookings.status', ['BOOKED', 'ONGOING'])
       .order('date_time', { ascending: true });
+
+    // Filter: booking overlaps selectedDate
+    const selectedISO = new Date(date).toISOString().split('T')[0];
 
     const allocMap: Record<string, {
       customer: string; vehicle: string; type: 'Pick' | 'Drop';
       bookingStatus: string; location: string; dateTime: string;
-      vehicleReg: string; pickupAt: string; dropAt: string;
+      vehicleReg: string;
     }> = {};
+
     ((allocations as any[]) || []).forEach((a: any) => {
+      const booking = a.booking_details?.bookings;
+      if (!booking) return;
+      const pickupDate = booking.pickup_at?.split('T')[0];
+      const dropDate   = booking.drop_at?.split('T')[0];
+      // Booking overlaps selected date
+      if (!pickupDate || !dropDate) return;
+      if (selectedISO < pickupDate || selectedISO > dropDate) return;
+
+      // Only store first (most relevant) allocation per driver
       if (!allocMap[a.driver_id]) {
         allocMap[a.driver_id] = {
-          customer: a.booking_details?.bookings?.customer_name || '—',
+          customer: booking.customer_name || '—',
           vehicle: a.booking_details?.vehicles?.models
             ? `${a.booking_details.vehicles.models.brand} ${a.booking_details.vehicles.models.name}`
             : '—',
           type: a.type,
-          bookingStatus: a.booking_details?.bookings?.status || '',
+          bookingStatus: booking.status || '',
           location: a.location || '—',
           dateTime: a.date_time,
           vehicleReg: a.booking_details?.vehicles?.registration_no || '—',
-          pickupAt: a.booking_details?.bookings?.pickup_at || '',
-          dropAt:   a.booking_details?.bookings?.drop_at   || '',
         };
       }
     });
@@ -487,20 +498,15 @@ const DriversPage: React.FC = () => {
       else if (alloc) driverStatus = alloc.bookingStatus === 'ONGOING' ? 'On Trip' : 'Allocated';
 
       return {
-        id: d.id,
-        name: d.full_name,
-        initials,
-        avatarColor: color.bg,
-        avatarTextColor: color.text,
-        phone: d.phone,
-        licenseNo: d.license_no,
+        id: d.id, name: d.full_name, initials,
+        avatarColor: color.bg, avatarTextColor: color.text,
+        phone: d.phone, licenseNo: d.license_no,
         trip: '—',
         currentLocation: alloc?.location || d.current_location || 'Not Assigned',
         currentBooking: alloc?.customer || 'Not Assigned',
         locationType: alloc?.type || null,
         vehicleReg: alloc?.vehicleReg || '—',
-        driverStatus,
-        dbStatus: d.status,
+        driverStatus, dbStatus: d.status,
         allocationDateTime: alloc?.dateTime || null,
       };
     });
@@ -515,9 +521,44 @@ const DriversPage: React.FC = () => {
 
     setDriversData(mapped);
     setLoading(false);
+    setRefreshing(false);
   };
 
   useEffect(() => { loadDrivers(selectedDate); }, [selectedDate]);
+
+  // ── Edit handlers ────────────────────────────────────────────
+  const startEdit = (driver: DriverRow) => {
+    setEditingId(driver.id);
+    setEditForm({
+      full_name:        driver.name,
+      phone:            driver.phone,
+      license_no:       driver.licenseNo,
+      current_location: driver.currentLocation === 'Not Assigned' ? '' : driver.currentLocation,
+    });
+    setConfirmDeleteId(null); // close delete confirm if open
+  };
+
+  const cancelEdit = () => { setEditingId(null); };
+
+  const saveEdit = async () => {
+    if (!editForm.full_name.trim()) { toast.error('Name is required.'); return; }
+    if (!editForm.phone.trim())     { toast.error('Phone is required.'); return; }
+    setSavingEdit(true);
+    try {
+      const { error } = await supabase.from('drivers').update({
+        full_name:        editForm.full_name.trim(),
+        phone:            editForm.phone.trim(),
+        license_no:       editForm.license_no.trim() || null,
+        current_location: editForm.current_location.trim() || null,
+        updated_at:       new Date().toISOString(),
+      }).eq('id', editingId!);
+
+      if (error) { toast.error('Failed to save: ' + error.message); return; }
+      toast.success('Driver updated!');
+      setEditingId(null);
+      await loadDrivers(selectedDate, true);
+    } finally { setSavingEdit(false); }
+  };
 
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from('drivers').delete().eq('id', id);
@@ -533,7 +574,7 @@ const DriversPage: React.FC = () => {
     const { error } = await supabase.from('drivers').update({ status: newStatus }).eq('id', driver.id);
     if (error) { toast.error('Failed to update driver status.'); setTogglingId(null); return; }
     toast.success(`Driver marked ${newStatus === 'active' ? 'Active' : 'Inactive'}.`);
-    await loadDrivers(selectedDate);
+    await loadDrivers(selectedDate, true);
     setTogglingId(null);
   };
 
@@ -575,16 +616,22 @@ const DriversPage: React.FC = () => {
                     value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
                 </div>
 
-                {/* Selective date picker */}
+                {/* Date picker */}
                 <div className="flex items-center space-x-2 bg-white px-4 py-2.5 rounded-xl border border-[#d1d0eb]">
                   <Calendar size={15} className="text-[#6c7e96] shrink-0" />
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={e => setSelectedDate(e.target.value)}
-                    className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]"
-                  />
+                  <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+                    className="outline-none bg-transparent text-sm font-semibold text-[#151a3c] cursor-pointer w-[116px]" />
                 </div>
+
+                {/* Refresh button */}
+                <button
+                  onClick={() => loadDrivers(selectedDate, true)}
+                  disabled={refreshing}
+                  title="Refresh"
+                  className="flex items-center justify-center w-10 h-10 bg-white border border-[#d1d0eb] rounded-xl text-[#6c7e96] hover:text-[#6360DF] hover:border-[#6360DF] transition-all disabled:opacity-60"
+                >
+                  <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+                </button>
 
                 {/* Filters */}
                 <button
@@ -689,7 +736,7 @@ const DriversPage: React.FC = () => {
                     ) : (
                       filtered.map(driver => (
                         <React.Fragment key={driver.id}>
-                          <tr className="group hover:bg-[#F8F9FA] transition-colors">
+                          <tr className={`group transition-colors ${editingId === driver.id ? 'bg-[#f8f7ff]' : 'hover:bg-[#F8F9FA]'}`}>
 
                             {/* Driver Name */}
                             <td className="py-5 pl-10 whitespace-nowrap">
@@ -747,20 +794,12 @@ const DriversPage: React.FC = () => {
                                 {togglingId === driver.id ? (
                                   <Loader2 size={14} className="animate-spin text-[#6360DF]" />
                                 ) : (
-                                  <button
-                                    onClick={() => handleToggleStatus(driver)}
-                                    className={`relative w-10 h-5 rounded-full transition-colors duration-300 shrink-0 ${
-                                      driver.dbStatus === 'active' ? 'bg-[#6360DF]' : 'bg-slate-300'
-                                    }`}
-                                  >
-                                    <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-300 ${
-                                      driver.dbStatus === 'active' ? 'left-5' : 'left-0.5'
-                                    }`} />
+                                  <button onClick={() => handleToggleStatus(driver)}
+                                    className={`relative w-10 h-5 rounded-full transition-colors duration-300 shrink-0 ${driver.dbStatus === 'active' ? 'bg-[#6360DF]' : 'bg-slate-300'}`}>
+                                    <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-300 ${driver.dbStatus === 'active' ? 'left-5' : 'left-0.5'}`} />
                                   </button>
                                 )}
-                                <span className={`text-[10px] font-extrabold tracking-widest ${
-                                  driver.dbStatus === 'active' ? 'text-[#6360DF]' : 'text-slate-400'
-                                }`}>
+                                <span className={`text-[10px] font-extrabold tracking-widest ${driver.dbStatus === 'active' ? 'text-[#6360DF]' : 'text-slate-400'}`}>
                                   {driver.dbStatus === 'active' ? 'Active' : 'Inactive'}
                                 </span>
                               </div>
@@ -771,13 +810,65 @@ const DriversPage: React.FC = () => {
                               <div className="flex items-center justify-end space-x-3">
                                 <button onClick={() => { setSelectedDriverId(driver.id); setView('profile'); }}
                                   className="text-[#6c7e96] hover:text-[#6360DF] transition-colors"><Eye size={18} /></button>
-                                <button className="text-[#6c7e96] hover:text-[#6360DF] transition-colors"><Pencil size={18} /></button>
+                                <button
+                                  onClick={() => editingId === driver.id ? cancelEdit() : startEdit(driver)}
+                                  className={`transition-colors ${editingId === driver.id ? 'text-[#6360DF]' : 'text-[#6c7e96] hover:text-[#6360DF]'}`}>
+                                  <Pencil size={18} />
+                                </button>
                                 <button onClick={() => setConfirmDeleteId(driver.id)}
                                   className="text-[#6c7e96] hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
                               </div>
                             </td>
                           </tr>
 
+                          {/* ── Inline Edit Row ── */}
+                          <AnimatePresence>
+                            {editingId === driver.id && (
+                              <motion.tr key="edit-row" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                <td colSpan={COL_SPAN} className="bg-[#f8f7ff] border-t border-[#d1d0eb]/30 px-10 py-5">
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                    <div className="space-y-1.5">
+                                      <label className={labelCls}>Full Name *</label>
+                                      <input className={inputCls} value={editForm.full_name}
+                                        onChange={e => setEditForm(f => ({ ...f, full_name: e.target.value }))}
+                                        placeholder="Full name" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <label className={labelCls}>Phone *</label>
+                                      <input className={inputCls} value={editForm.phone}
+                                        onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))}
+                                        placeholder="+91 98765 43210" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <label className={labelCls}>License No.</label>
+                                      <input className={inputCls} value={editForm.license_no}
+                                        onChange={e => setEditForm(f => ({ ...f, license_no: e.target.value }))}
+                                        placeholder="DL-XXXXXXXXXXXX" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <label className={labelCls}>Current Location</label>
+                                      <input className={inputCls} value={editForm.current_location}
+                                        onChange={e => setEditForm(f => ({ ...f, current_location: e.target.value }))}
+                                        placeholder="e.g. Mapusa" />
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center space-x-3">
+                                    <button onClick={cancelEdit}
+                                      className="flex items-center space-x-1.5 border border-[#d1d0eb] text-[#6c7e96] px-5 py-2 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all">
+                                      <X size={12} /><span>Cancel</span>
+                                    </button>
+                                    <button onClick={saveEdit} disabled={savingEdit}
+                                      className="flex items-center space-x-1.5 bg-[#6360DF] hover:bg-[#5451d0] text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md shadow-[#6360df22] transition-all disabled:opacity-60">
+                                      {savingEdit ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                                      <span>{savingEdit ? 'Saving...' : 'Save Changes'}</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </motion.tr>
+                            )}
+                          </AnimatePresence>
+
+                          {/* ── Delete Confirm Row ── */}
                           <AnimatePresence>
                             {confirmDeleteId === driver.id && (
                               <motion.tr key="confirm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>

@@ -30,7 +30,7 @@ interface SelectedVehicle {
 
 interface CreateNewBookingProps {
   onBack: () => void;
-  onConfirm: (bookingRow: any) => void; // receives real DB row
+  onConfirm: (bookingRow: any) => void;
 }
 
 const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }) => {
@@ -45,25 +45,40 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
   const [customerData, setCustomerData] = useState({
     fullName: '',
     phone: '',
-    pickupLocation: 'Mapusa',
-    dropLocation: 'Old Goa',
+    pickupLocation: '',
+    dropLocation: '',
     pickupDateTime: '',
     returnDateTime: ''
   });
 
   const [selectedVehicles, setSelectedVehicles] = useState<SelectedVehicle[]>([]);
   const [securityDeposit, setSecurityDeposit] = useState(true);
+  const [securityDepositValue, setSecurityDepositValue] = useState<string>('2000');
+  const [editingDeposit, setEditingDeposit] = useState(false);
+  const [locationCharges, setLocationCharges] = useState(true);
+  const [pickupChargeValue, setPickupChargeValue] = useState<string>('0');
+  const [dropChargeValue, setDropChargeValue] = useState<string>('0');
+  const [editingPickupCharge, setEditingPickupCharge] = useState(false);
+  const [editingDropCharge, setEditingDropCharge] = useState(false);
   const [discountEnabled, setDiscountEnabled] = useState(false);
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [discountValue, setDiscountValue] = useState<string>('0');
   const [filters, setFilters] = useState({ transmission: 'All', fuel: 'All', type: 'All' });
 
+  // Raw fleet from DB (all vehicles, status=available)
   const [fleetData, setFleetData] = useState<Record<string, any[]>>({});
   const [fleetLoading, setFleetLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [ownerId, setOwnerId] = useState<string | null>(null);
 
-  // ── Load available fleet from DB ──────────────────────────
+  // Set of vehicle IDs that are booked in the selected date range
+  const [bookedVehicleIds, setBookedVehicleIds] = useState<Set<string>>(new Set());
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+
+  // Service locations
+  const [serviceLocations, setServiceLocations] = useState<{location_name: string; surcharge: number; night_surcharge: number}[]>([]);
+
+  // ── Load fleet from DB ─────────────────────────────────────
   const loadFleet = async () => {
     setFleetLoading(true);
     const authUser = await getCurrentUser();
@@ -74,7 +89,31 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     if (!ownerRow) { setFleetLoading(false); return; }
     setOwnerId(ownerRow.id);
 
-    // Also load tariffs for rate display
+    // Load service locations
+    const { data: locData } = await supabase
+      .from('owner_service_locations')
+      .select('location_name, surcharge, night_surcharge')
+      .eq('owner_id', ownerRow.id)
+      .order('created_at', { ascending: true });
+    const locs = (locData || []).map((l: any) => ({
+      location_name: l.location_name,
+      surcharge: l.surcharge || 0,
+      night_surcharge: l.night_surcharge || 0,
+    }));
+    setServiceLocations(locs);
+
+    // Auto-select first location + seed location charges value
+    if (locs.length > 0) {
+      setCustomerData(prev => ({
+        ...prev,
+        pickupLocation: prev.pickupLocation || locs[0].location_name,
+        dropLocation:   prev.dropLocation   || locs[0].location_name,
+      }));
+      setPickupChargeValue(String(locs[0].surcharge || 0));
+      setDropChargeValue(String(locs[0].surcharge || 0));
+    }
+
+    // Load tariffs
     const { data: tariffData } = await supabase
       .from('tariffs')
       .select('model_id, rate_per_day')
@@ -82,11 +121,12 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     const tariffMap: Record<string, number> = {};
     ((tariffData as any[]) || []).forEach((t: any) => { tariffMap[t.model_id] = t.rate_per_day; });
 
+    // Load all non-maintenance vehicles
     const { data, error } = await supabase
       .from('vehicles')
       .select('id, status, transmission, fuel_type, models(id, brand, name, default_transmission, default_fuel_type, base_rate_per_day, categories(name))')
       .eq('owner_id', ownerRow.id)
-      .eq('status', 'available');
+      .in('status', ['available', 'rented']); // include rented — date check will handle them
 
     if (error) { toast.error('Failed to load fleet.'); setFleetLoading(false); return; }
 
@@ -114,8 +154,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       if (!grouped[m.category]) grouped[m.category] = [];
       grouped[m.category].push({
         id: m.id, name: m.name, trans: m.trans, fuel: m.fuel,
-        available: `${m.vehicles.length}/${m.vehicles.length}`,
-        availableCount: m.vehicles.length,
+        totalCount: m.vehicles.length,
         vehicleIds: m.vehicles,
         rate: m.rate,
       });
@@ -127,28 +166,97 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   useEffect(() => { loadFleet(); }, []);
 
+  // ── Sync charge values when pickup/drop location changes ────
+  useEffect(() => {
+    if (serviceLocations.length === 0) return;
+    const pickup = serviceLocations.find(l => l.location_name === customerData.pickupLocation);
+    setPickupChargeValue(String(pickup?.surcharge ?? 0));
+  }, [customerData.pickupLocation, serviceLocations]);
+
+  useEffect(() => {
+    if (serviceLocations.length === 0) return;
+    const drop = serviceLocations.find(l => l.location_name === customerData.dropLocation);
+    setDropChargeValue(String(drop?.surcharge ?? 0));
+  }, [customerData.dropLocation, serviceLocations]);
+
+  // ── Re-check availability when dates change ────────────────
+  useEffect(() => {
+    const fetchBookedIds = async () => {
+      if (!customerData.pickupDateTime || !customerData.returnDateTime || !ownerId) {
+        setBookedVehicleIds(new Set());
+        return;
+      }
+      setAvailabilityLoading(true);
+      try {
+        const pickupISO = new Date(customerData.pickupDateTime).toISOString();
+        const returnISO = new Date(customerData.returnDateTime).toISOString();
+
+        // Find booking_details whose booking overlaps our requested range
+        // Overlap condition: booking.pickup_at < our returnISO AND booking.drop_at > our pickupISO
+        const { data } = await supabase
+          .from('booking_details')
+          .select('vehicle_id, bookings!inner(pickup_at, drop_at, status, owner_id)')
+          .eq('bookings.owner_id', ownerId)
+          .in('bookings.status', ['BOOKED', 'ONGOING'])
+          .lt('bookings.pickup_at', returnISO)
+          .gt('bookings.drop_at', pickupISO);
+
+        const ids = new Set<string>(
+          ((data as any[]) || []).map((d: any) => d.vehicle_id).filter(Boolean)
+        );
+        setBookedVehicleIds(ids);
+      } finally {
+        setAvailabilityLoading(false);
+      }
+    };
+    fetchBookedIds();
+  }, [customerData.pickupDateTime, customerData.returnDateTime, ownerId]);
+
+  // ── Fleet with real-time availability applied ──────────────
+  const fleetWithAvailability = useMemo(() => {
+    const result: Record<string, any[]> = {};
+    Object.entries(fleetData).forEach(([category, models]) => {
+      const enriched = models.map(m => {
+        const freeIds = m.vehicleIds.filter((vid: string) => !bookedVehicleIds.has(vid));
+        const availableCount = freeIds.length;
+        return {
+          ...m,
+          availableCount,
+          freeVehicleIds: freeIds,
+          available: `${availableCount}/${m.totalCount}`,
+          fullyBooked: availableCount === 0,
+        };
+      });
+      result[category] = enriched;
+    });
+    return result;
+  }, [fleetData, bookedVehicleIds]);
+
+  // ── Apply filters + hide fully booked models ───────────────
   const filteredFleet = useMemo(() => {
     const result: Record<string, any[]> = {};
-    Object.entries(fleetData).forEach(([category, vehicles]) => {
+    Object.entries(fleetWithAvailability).forEach(([category, vehicles]) => {
       const filtered = vehicles.filter(v => {
         const transMatch = filters.transmission === 'All' || v.trans === filters.transmission;
         const fuelMatch  = filters.fuel === 'All' || v.fuel === filters.fuel;
         const typeMatch  = filters.type === 'All' || category.includes(filters.type.toUpperCase());
-        return transMatch && fuelMatch && typeMatch;
+        // Only hide fully-booked models when dates are set
+        const availableMatch = !customerData.pickupDateTime || !customerData.returnDateTime || !v.fullyBooked;
+        return transMatch && fuelMatch && typeMatch && availableMatch;
       });
       if (filtered.length > 0) result[category] = filtered;
     });
     return result;
-  }, [filters, fleetData]);
+  }, [filters, fleetWithAvailability, customerData.pickupDateTime, customerData.returnDateTime]);
 
   const handleVehicleAction = (v: any, action: 'add' | 'inc' | 'dec') => {
     setSelectedVehicles(prev => {
       const existing = prev.find(item => item.id === v.id);
       if (action === 'add') {
         return [...prev, {
-          id: v.id, vehicleId: v.vehicleIds[0], name: v.name,
+          id: v.id, vehicleId: v.freeVehicleIds?.[0] ?? v.vehicleIds[0], name: v.name,
           transmission: v.trans, fuel: v.fuel, rate: v.rate,
-          quantity: 1, availableCount: v.availableCount,
+          quantity: 1, availableCount: v.availableCount ?? v.totalCount,
         }];
       }
       if (action === 'inc') {
@@ -165,6 +273,20 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     });
   };
 
+  // Drop selected vehicles that become unavailable when dates change
+  useEffect(() => {
+    if (bookedVehicleIds.size === 0) return;
+    setSelectedVehicles(prev =>
+      prev.map(sv => {
+        const modelEntry = Object.values(fleetWithAvailability).flat().find((m: any) => m.id === sv.id) as any;
+        if (!modelEntry) return sv;
+        const newMax = modelEntry.availableCount;
+        if (newMax === 0) return null as any;
+        return { ...sv, availableCount: newMax, quantity: Math.min(sv.quantity, newMax) };
+      }).filter(Boolean)
+    );
+  }, [bookedVehicleIds]);
+
   const totalSelectedCount = useMemo(() =>
     selectedVehicles.reduce((acc, curr) => acc + curr.quantity, 0), [selectedVehicles]);
 
@@ -174,8 +296,12 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   const calculations = useMemo(() => {
     const subtotal  = selectedVehicles.reduce((acc, curr) => acc + (curr.rate * curr.quantity), 0);
-    const surcharge = selectedVehicles.length > 0 ? 300 : 0;
-    const deposit   = securityDeposit ? 2000 : 0;
+    // Use editable pickup + drop surcharges when enabled, else 0
+    const surcharge = locationCharges && selectedVehicles.length > 0
+      ? (parseFloat(pickupChargeValue) || 0) + (parseFloat(dropChargeValue) || 0)
+      : 0;
+    // Use editable deposit value when enabled, else 0
+    const deposit = securityDeposit ? (parseFloat(securityDepositValue) || 0) : 0;
     const val       = parseFloat(discountValue) || 0;
     let discountAmount = 0, error = '';
     if (discountEnabled) {
@@ -191,9 +317,9 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     const gst   = taxableAmount * 0.18;
     const total = taxableAmount + deposit + gst;
     return { subtotal, surcharge, deposit, gst, total, discountAmount, error };
-  }, [selectedVehicles, securityDeposit, discountType, discountValue, discountEnabled]);
+  }, [selectedVehicles, securityDeposit, securityDepositValue, locationCharges, pickupChargeValue, dropChargeValue, discountType, discountValue, discountEnabled]);
 
-  // ── Save booking → fetch DB row → pass to onConfirm ──────
+  // ── Save booking ───────────────────────────────────────────
   const handleConfirm = async () => {
     if (!isConfirmEnabled || !ownerId) return;
     setIsSaving(true);
@@ -226,7 +352,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
           balance_amount:   Math.round(calculations.total),
           payment_status:   'UNPAID',
         })
-        .select('*')   // ← select all columns so we get the full row back
+        .select('*')
         .single();
 
       if (bookingErr || !bookingRow) {
@@ -234,19 +360,16 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         return;
       }
 
-      // Insert booking_details — one row per vehicle unit
+      // Insert booking_details — assign free vehicle IDs in order
       const detailRows: any[] = [];
       for (const sv of selectedVehicles) {
-        let vehicleIds: string[] = [];
-        for (const vehicles of Object.values(fleetData)) {
-          const match = (vehicles as any[]).find((v: any) => v.id === sv.id);
-          if (match) { vehicleIds = match.vehicleIds; break; }
-        }
+        const modelEntry = Object.values(fleetWithAvailability).flat().find((m: any) => m.id === sv.id) as any;
+        const freeIds: string[] = modelEntry?.freeVehicleIds ?? (sv.vehicleId ? [sv.vehicleId] : []);
         for (let i = 0; i < sv.quantity; i++) {
           detailRows.push({
             owner_id:      ownerId,
             booking_id:    bookingRow.id,
-            vehicle_id:    vehicleIds[i] ?? vehicleIds[0],
+            vehicle_id:    freeIds[i] ?? freeIds[0],
             model_id:      sv.id,
             quantity:      1,
             daily_rate:    sv.rate,
@@ -262,8 +385,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       if (detailErr) toast.error('Booking saved but vehicle details failed: ' + detailErr.message);
 
       toast.success('Booking confirmed!');
-
-      // ── KEY FIX: pass the real DB row directly ──
       onConfirm(bookingRow);
 
     } catch (err) {
@@ -318,7 +439,13 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                   <select value={customerData.pickupLocation}
                     onChange={e => setCustomerData({...customerData, pickupLocation: e.target.value})}
                     className="w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-3 px-5 text-[#151a3c] font-bold outline-none appearance-none cursor-pointer">
-                    <option>Mapusa</option><option>Panjim</option><option>Airport</option><option>Calangute</option>
+                    {serviceLocations.length === 0
+                      ? <option value="">No locations set</option>
+                      : serviceLocations.map(l => (
+                          <option key={l.location_name} value={l.location_name}>
+                            {l.location_name}{l.surcharge > 0 ? ` (+₹${l.surcharge})` : ''}
+                          </option>
+                        ))}
                   </select>
                   <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" size={18} />
                 </div>
@@ -339,7 +466,13 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                   <select value={customerData.dropLocation}
                     onChange={e => setCustomerData({...customerData, dropLocation: e.target.value})}
                     className="w-full bg-[#F8F9FA] border border-[#d1d0eb] rounded-xl py-3 px-5 text-[#151a3c] font-bold outline-none appearance-none cursor-pointer">
-                    <option>Old Goa</option><option>Vagator</option><option>Airport</option><option>Margao</option>
+                    {serviceLocations.length === 0
+                      ? <option value="">No locations set</option>
+                      : serviceLocations.map(l => (
+                          <option key={l.location_name} value={l.location_name}>
+                            {l.location_name}{l.surcharge > 0 ? ` (+₹${l.surcharge})` : ''}
+                          </option>
+                        ))}
                   </select>
                   <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" size={18} />
                 </div>
@@ -362,7 +495,19 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
             <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
               <div className="flex items-center space-x-3">
                 <div className="bg-[#6360DF]/10 p-2 rounded-lg text-[#6360DF]"><CarIcon size={18} /></div>
-                <h3 className="text-lg font-extrabold text-[#151a3c]">Select Fleet</h3>
+                <div>
+                  <h3 className="text-lg font-extrabold text-[#151a3c]">Select Fleet</h3>
+                  {availabilityLoading && (
+                    <p className="text-[11px] text-[#6360DF] font-medium flex items-center space-x-1 mt-0.5">
+                      <Loader2 size={10} className="animate-spin" /><span>Checking availability...</span>
+                    </p>
+                  )}
+                  {!availabilityLoading && customerData.pickupDateTime && customerData.returnDateTime && (
+                    <p className="text-[11px] text-[#10B981] font-medium mt-0.5">
+                      Showing availability for selected dates
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {[
@@ -416,15 +561,28 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                         </tr>
                         {(vehicles as any[]).map(v => {
                           const selected = selectedVehicles.find(sv => sv.id === v.id);
+                          const datesSet = !!(customerData.pickupDateTime && customerData.returnDateTime);
+                          const availCount = datesSet ? v.availableCount : v.totalCount;
+                          const isLow = availCount <= 2 && availCount > 0;
+
                           return (
                             <tr key={v.id} className="border-b border-[#d1d0eb]/10 last:border-0 hover:bg-[#F8F9FA] transition-colors">
                               <td className="py-4 font-bold text-[#151a3c] text-sm">{v.name}</td>
                               <td className="py-4 text-[#6c7e96] text-xs font-semibold">{v.trans}</td>
                               <td className="py-4 text-[#6c7e96] text-xs font-semibold">{v.fuel}</td>
                               <td className="py-4 text-center">
-                                <span className={`text-xs font-extrabold ${v.availableCount <= 2 ? 'text-[#F59E0B]' : 'text-[#10B981]'}`}>
-                                  {v.available}
+                                <span className={`text-xs font-extrabold ${
+                                  isLow ? 'text-[#F59E0B]' : 'text-[#10B981]'
+                                }`}>
+                                  {datesSet
+                                    ? `${availCount}/${v.totalCount}`
+                                    : `${v.totalCount}/${v.totalCount}`}
                                 </span>
+                                {datesSet && availCount < v.totalCount && (
+                                  <span className="block text-[9px] text-[#F59E0B] font-bold mt-0.5">
+                                    {v.totalCount - availCount} booked
+                                  </span>
+                                )}
                               </td>
                               <td className="py-4 font-extrabold text-[#151a3c] text-sm">₹{v.rate.toLocaleString()}</td>
                               <td className="py-4 text-right pr-4">
@@ -436,7 +594,8 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                                   </div>
                                 ) : (
                                   <button onClick={() => handleVehicleAction(v, 'add')}
-                                    className="bg-[#6360DF] hover:bg-[#5451d0] text-white px-5 py-2 rounded-lg text-xs font-extrabold transition-all active:scale-95">
+                                    disabled={availabilityLoading}
+                                    className="bg-[#6360DF] hover:bg-[#5451d0] text-white px-5 py-2 rounded-lg text-xs font-extrabold transition-all active:scale-95 disabled:opacity-60">
                                     ADD
                                   </button>
                                 )}
@@ -522,24 +681,124 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
               {/* Price breakdown */}
               <div className="space-y-3">
-                {[
-                  { label: 'Subtotal',            val: `₹${calculations.subtotal.toLocaleString()}.00` },
-                  { label: 'Location Surcharges', val: `₹${calculations.surcharge.toLocaleString()}.00` },
-                ].map(row => (
-                  <div key={row.label} className="flex justify-between text-sm">
-                    <span className="font-semibold text-[#6c7e96]">{row.label}</span>
-                    <span className="font-extrabold text-[#151a3c]">{row.val}</span>
+                {/* Subtotal — static */}
+                <div className="flex justify-between text-sm">
+                  <span className="font-semibold text-[#6c7e96]">Subtotal</span>
+                  <span className="font-extrabold text-[#151a3c]">₹{calculations.subtotal.toLocaleString()}.00</span>
+                </div>
+
+                {/* Location Charges — checkbox + split pickup/drop editable */}
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" checked={locationCharges}
+                      onChange={() => { setLocationCharges(v => !v); setEditingPickupCharge(false); setEditingDropCharge(false); }}
+                      className="w-4 h-4 rounded text-[#6360DF] focus:ring-[#6360DF]" />
+                    <span className="text-sm font-semibold text-[#6c7e96]">Location Charges</span>
+                    {locationCharges && (
+                      <span className="ml-auto text-sm font-extrabold text-[#151a3c]">
+                        ₹{((parseFloat(pickupChargeValue) || 0) + (parseFloat(dropChargeValue) || 0)).toLocaleString()}.00
+                      </span>
+                    )}
                   </div>
-                ))}
-                {/* Security deposit toggle */}
+
+                  {locationCharges && (
+                    <div className="pl-6 space-y-1.5">
+                      {/* Pickup charge row */}
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[#6c7e96] font-medium">↑ Pickup · {customerData.pickupLocation || '—'}</span>
+                        <div className="flex items-center space-x-1.5">
+                          {editingPickupCharge ? (
+                            <input
+                              autoFocus
+                              type="number" min="0"
+                              value={pickupChargeValue}
+                              onChange={e => setPickupChargeValue(e.target.value)}
+                              onBlur={() => setEditingPickupCharge(false)}
+                              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingPickupCharge(false); }}
+                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none"
+                            />
+                          ) : (
+                            <>
+                              <span className="font-bold text-[#151a3c]">₹{(parseFloat(pickupChargeValue) || 0).toLocaleString()}.00</span>
+                              <button onClick={() => setEditingPickupCharge(true)}
+                                className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Drop charge row */}
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[#6c7e96] font-medium">↓ Drop · {customerData.dropLocation || '—'}</span>
+                        <div className="flex items-center space-x-1.5">
+                          {editingDropCharge ? (
+                            <input
+                              autoFocus
+                              type="number" min="0"
+                              value={dropChargeValue}
+                              onChange={e => setDropChargeValue(e.target.value)}
+                              onBlur={() => setEditingDropCharge(false)}
+                              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDropCharge(false); }}
+                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none"
+                            />
+                          ) : (
+                            <>
+                              <span className="font-bold text-[#151a3c]">₹{(parseFloat(dropChargeValue) || 0).toLocaleString()}.00</span>
+                              <button onClick={() => setEditingDropCharge(true)}
+                                className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Security Deposit — checkbox + editable */}
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center space-x-2">
-                    <input type="checkbox" checked={securityDeposit} onChange={() => setSecurityDeposit(!securityDeposit)}
+                    <input type="checkbox" checked={securityDeposit}
+                      onChange={() => { setSecurityDeposit(v => !v); setEditingDeposit(false); }}
                       className="w-4 h-4 rounded text-[#6360DF] focus:ring-[#6360DF]" />
                     <span className="font-semibold text-[#6c7e96]">Security Deposit</span>
                   </div>
-                  <span className="font-extrabold text-[#151a3c]">₹{calculations.deposit.toLocaleString()}.00</span>
+                  {securityDeposit && (
+                    <div className="flex items-center space-x-1.5">
+                      {editingDeposit ? (
+                        <input
+                          autoFocus
+                          type="number" min="0"
+                          value={securityDepositValue}
+                          onChange={e => setSecurityDepositValue(e.target.value)}
+                          onBlur={() => setEditingDeposit(false)}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDeposit(false); }}
+                          className="w-20 text-right font-extrabold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-sm outline-none"
+                        />
+                      ) : (
+                        <>
+                          <span className="font-extrabold text-[#151a3c]">₹{(parseFloat(securityDepositValue) || 0).toLocaleString()}.00</span>
+                          <button
+                            onClick={() => setEditingDeposit(true)}
+                            className="p-1 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded-lg transition-all">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
+
+                {/* GST */}
                 <div className="flex justify-between text-sm">
                   <span className="font-semibold text-[#6c7e96]">GST (18%)</span>
                   <span className="font-extrabold text-[#151a3c]">₹{Math.round(calculations.gst).toLocaleString()}.00</span>

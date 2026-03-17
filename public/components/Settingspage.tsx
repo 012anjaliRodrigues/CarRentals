@@ -187,6 +187,10 @@ const Settingspage: React.FC = () => {
   const [newLocName,    setNewLocName]    = useState('');
   const [savingLoc,     setSavingLoc]     = useState(false);
 
+  // Base location state
+  const [baseLocation,     setBaseLocation]     = useState('');
+  const [baseLocationOrig, setBaseLocationOrig] = useState('');
+
   // ── Load ───────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
@@ -196,7 +200,7 @@ const Settingspage: React.FC = () => {
 
       const { data: owner } = await supabase
         .from('owners')
-        .select('id, night_timing_from, night_timing_to')
+        .select('id, night_timing_from, night_timing_to, base_location')
         .eq('user_id', authUser.id)
         .single();
       if (!owner) { setLoading(false); return; }
@@ -206,6 +210,8 @@ const Settingspage: React.FC = () => {
       const nTo   = owner.night_timing_to   || '';
       setNightFrom(nFrom); setNightFromOrig(nFrom);
       setNightTo(nTo);     setNightToOrig(nTo);
+      const bLoc = owner.base_location || '';
+      setBaseLocation(bLoc); setBaseLocationOrig(bLoc);
 
       const { data: locs } = await supabase
         .from('owner_service_locations')
@@ -231,12 +237,16 @@ const Settingspage: React.FC = () => {
   const saveLocations = async () => {
     setSavingLoc(true);
     try {
-      // Night timings
+      // Base location + Night timings
       const { error: nightErr } = await supabase
         .from('owners')
-        .update({ night_timing_from: nightFrom || null, night_timing_to: nightTo || null })
+        .update({
+          base_location: baseLocation.trim() || null,
+          night_timing_from: nightFrom || null,
+          night_timing_to: nightTo || null,
+        })
         .eq('id', ownerId);
-      if (nightErr) { toast.error('Failed to save night timings.'); return; }
+      if (nightErr) { toast.error('Failed to save settings.'); return; }
 
       // Insert new rows (convert string → number for DB)
       for (const loc of serviceLocations.filter(l => l.isNew)) {
@@ -291,6 +301,7 @@ const Settingspage: React.FC = () => {
       setServiceLocationsOrig(JSON.parse(JSON.stringify(refreshed)));
       setNightFromOrig(nightFrom);
       setNightToOrig(nightTo);
+      setBaseLocationOrig(baseLocation);
       setEditingLocations(false);
     } finally { setSavingLoc(false); }
   };
@@ -299,6 +310,7 @@ const Settingspage: React.FC = () => {
     setServiceLocations(JSON.parse(JSON.stringify(serviceLocationsOrig)));
     setNightFrom(nightFromOrig);
     setNightTo(nightToOrig);
+    setBaseLocation(baseLocationOrig);
     setNewLocName('');
     setEditingLocations(false);
   };
@@ -354,6 +366,32 @@ const Settingspage: React.FC = () => {
         onSave={saveLocations}
         onCancel={cancelLocations}
       >
+        {/* Base Location — no surcharge, placed before table */}
+        <div className="mb-5 space-y-1.5">
+          <label className={labelCls}>Base Location (HQ)</label>
+          <p className="text-[11px] text-[#6c7e96] font-medium -mt-0.5">Your main operating location — no surcharge applies here</p>
+          {editingLocations ? (
+            <LocationAutocomplete
+              value={baseLocation}
+              onChange={setBaseLocation}
+              existingLocations={serviceLocations.map(l => l.location_name)}
+              placeholder="e.g. Panaji, Mapusa..."
+            />
+          ) : (
+            <div className="flex items-center space-x-2 py-2">
+              <MapPin size={13} className="text-[#6360DF] shrink-0" />
+              <span className="text-sm font-bold text-[#151a3c]">
+                {baseLocation || <span className="text-[#6c7e96] font-normal italic">Not set</span>}
+              </span>
+              {baseLocation && (
+                <span className="ml-2 text-[10px] font-extrabold text-[#6360DF] bg-[#EEEDFA] px-2.5 py-0.5 rounded-full tracking-wide">
+                  HQ · No Charge
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Table */}
         <div className="overflow-x-auto rounded-xl border border-[#d1d0eb]/40">
           <table className="w-full text-left">
