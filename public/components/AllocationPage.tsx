@@ -845,6 +845,7 @@ const AllocationPage: React.FC = () => {
         </div>
       </motion.div>
 
+
       <AnimatePresence>
         {popupRow && (
           <AllocationDetailPopup row={popupRow} drivers={drivers} availableVehicles={availableVehicles}

@@ -896,4 +896,5 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
   );
 };
 
+
 export default CreateNewBooking;
