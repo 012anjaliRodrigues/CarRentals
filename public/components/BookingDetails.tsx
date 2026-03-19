@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft, Printer, Car as CarIcon, Share2, Link as LinkIcon,
   Download, CheckCircle, UserCircle, ChevronDown, Lock, Edit,
-  ExternalLink, Loader2, User as UserIcon,
+  ExternalLink, Loader2, User as UserIcon, X, Save,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../supabaseClient';
+import { toast } from 'react-hot-toast';
 
 interface BookingDetailsProps {
   booking: any;
@@ -14,13 +15,39 @@ interface BookingDetailsProps {
   onEdit: () => void;
 }
 
+// Per-vehicle unit — extended with editable fields
 interface FleetItem {
-  id: string;
+  id: string;             // booking_detail id
+  modelId: string;
   name: string;
-  registrationNo: string;
+  registrationNo: string; // current (may be blank)
+  vehicleId: string | null;
   details: string;
-  pickDriver: string;
-  dropDriver: string;
+  pickDriver: string;     // display name
+  pickDriverId: string | null;
+  dropDriver: string;     // display name
+  dropDriverId: string | null;
+  pickAllocationId: string | null;
+  dropAllocationId: string | null;
+}
+
+// Editable draft — mirrors FleetItem but only the editable fields
+interface FleetDraft {
+  detailId: string;
+  vehicleId: string;      // '' = unassigned
+  pickDriverId: string;   // '' = unassigned
+  dropDriverId: string;
+}
+
+interface Driver {
+  id: string;
+  full_name: string;
+  status: string;
+}
+
+interface VehicleOption {
+  id: string;
+  registration_no: string;
 }
 
 const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'details', onBack, onEdit }) => {
@@ -29,80 +56,262 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'detail
   const isConfirmation = mode === 'confirmed';
 
   const [paymentState, setPaymentState] = useState({
-    advanceStatus: 'pending' as 'pending' | 'paid' | 'partial',
-    cashAmount: '',
+    advanceStatus:  'pending' as 'pending' | 'paid' | 'partial',
+    cashAmount:     '',
     cashPaymentType: 'partial' as 'full' | 'partial',
-    totalAmount:   Number(booking.total_amount   || booking.pricing?.total   || 0),
-    advanceAmount: Number(booking.advance_amount || booking.pricing?.advance || 0),
-    balanceDue:    Number(booking.balance_amount || booking.pricing?.balance || 0),
+    totalAmount:    Number(booking.total_amount   || booking.pricing?.total   || 0),
+    advanceAmount:  Number(booking.advance_amount || booking.pricing?.advance || 0),
+    balanceDue:     Number(booking.balance_amount || booking.pricing?.balance || 0),
   });
   const [isPaymentFormActive, setIsPaymentFormActive] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState<'upi' | 'cash'>('upi');
 
+  // ── Edit mode state ───────────────────────────────────────
+  const [isEditing, setIsEditing]   = useState(false);
+  const [isSaving,  setIsSaving]    = useState(false);
+  // draft holds the in-progress edits keyed by detailId
+  const [drafts, setDrafts]         = useState<Record<string, FleetDraft>>({});
+
+  // ── Reference data ────────────────────────────────────────
+  const [drivers,        setDrivers]        = useState<Driver[]>([]);
+  // vehiclesByModel: modelId → list of vehicles for that model
+  const [vehiclesByModel, setVehiclesByModel] = useState<Record<string, VehicleOption[]>>({});
+
   // ── Real fleet data ───────────────────────────────────────
-  const [fleetItems, setFleetItems] = useState<FleetItem[]>([]);
+  const [fleetItems,   setFleetItems]   = useState<FleetItem[]>([]);
   const [fleetLoading, setFleetLoading] = useState(false);
 
   const bookingId = booking.id;
+  const ownerId   = booking.owner_id;
 
+  // ── Load drivers + vehicles (for dropdowns) ───────────────
   useEffect(() => {
-    if (!bookingId) return;
-    const loadFleet = async () => {
-      setFleetLoading(true);
-      try {
-        // One row per vehicle unit in this booking
-        const { data: details } = await supabase
-          .from('booking_details')
-          .select(`
-            id,
-            vehicles (
-              registration_no,
-              transmission,
-              fuel_type,
-              models ( brand, name )
-            )
-          `)
-          .eq('booking_id', bookingId);
+    if (!ownerId) return;
+    const loadRefData = async () => {
+      // Drivers — all active for this owner
+      const { data: driverData } = await supabase
+        .from('drivers')
+        .select('id, full_name, status')
+        .eq('owner_id', ownerId)
+        .eq('status', 'active')
+        .order('full_name');
+      setDrivers((driverData as Driver[]) || []);
 
-        if (!details || details.length === 0) { setFleetLoading(false); return; }
-
-        const detailIds = (details as any[]).map((d: any) => d.id);
-
-        // Allocations for these detail rows → Pick & Drop drivers
-        const { data: allocs } = await supabase
-          .from('allocations')
-          .select('booking_detail_id, type, drivers ( full_name )')
-          .in('booking_detail_id', detailIds);
-
-        // Build map: detailId → { pick, drop }
-        const driverMap: Record<string, { pick: string; drop: string }> = {};
-        ((allocs as any[]) || []).forEach((a: any) => {
-          if (!driverMap[a.booking_detail_id])
-            driverMap[a.booking_detail_id] = { pick: '—', drop: '—' };
-          if (a.type === 'Pick') driverMap[a.booking_detail_id].pick = a.drivers?.full_name || '—';
-          if (a.type === 'Drop') driverMap[a.booking_detail_id].drop = a.drivers?.full_name || '—';
-        });
-
-        // Each detail = one individual vehicle card
-        setFleetItems(((details as any[]) || []).map((d: any) => ({
-          id:             d.id,
-          name:           d.vehicles?.models
-                            ? `${d.vehicles.models.brand} ${d.vehicles.models.name}`
-                            : '—',
-          registrationNo: d.vehicles?.registration_no || '—',
-          details:        [d.vehicles?.transmission, d.vehicles?.fuel_type]
-                            .filter(Boolean).join(' • ').toUpperCase(),
-          pickDriver: driverMap[d.id]?.pick || '—',
-          dropDriver: driverMap[d.id]?.drop || '—',
-        })));
-      } catch (e) { console.error(e); }
-      finally { setFleetLoading(false); }
+      // Vehicles grouped by model
+      const { data: vehicleData } = await supabase
+        .from('vehicles')
+        .select('id, registration_no, model_id')
+        .eq('owner_id', ownerId)
+        .order('registration_no');
+      const grouped: Record<string, VehicleOption[]> = {};
+      ((vehicleData as any[]) || []).forEach((v: any) => {
+        if (!grouped[v.model_id]) grouped[v.model_id] = [];
+        grouped[v.model_id].push({ id: v.id, registration_no: v.registration_no });
+      });
+      setVehiclesByModel(grouped);
     };
-    loadFleet();
-  }, [bookingId]);
+    loadRefData();
+  }, [ownerId]);
+
+  // ── Load fleet items ──────────────────────────────────────
+  const loadFleet = async () => {
+    if (!bookingId) return;
+    setFleetLoading(true);
+    try {
+      const { data: details } = await supabase
+        .from('booking_details')
+        .select(`
+          id,
+          model_id,
+          vehicle_id,
+          vehicles (
+            registration_no,
+            transmission,
+            fuel_type,
+            models ( brand, name )
+          )
+        `)
+        .eq('booking_id', bookingId);
+
+      if (!details || details.length === 0) { setFleetLoading(false); return; }
+
+      const detailIds = (details as any[]).map((d: any) => d.id);
+
+      // Allocations → Pick & Drop drivers
+      const { data: allocs } = await supabase
+        .from('allocations')
+        .select('id, booking_detail_id, type, driver_id, drivers ( full_name )')
+        .in('booking_detail_id', detailIds);
+
+      // Build map: detailId → { pick, drop }
+      const driverMap: Record<string, {
+        pick: string; pickId: string | null; pickAllocId: string | null;
+        drop: string; dropId: string | null; dropAllocId: string | null;
+      }> = {};
+      ((allocs as any[]) || []).forEach((a: any) => {
+        if (!driverMap[a.booking_detail_id])
+          driverMap[a.booking_detail_id] = {
+            pick: '—', pickId: null, pickAllocId: null,
+            drop: '—', dropId: null, dropAllocId: null,
+          };
+        if (a.type === 'Pick') {
+          driverMap[a.booking_detail_id].pick        = a.drivers?.full_name || '—';
+          driverMap[a.booking_detail_id].pickId      = a.driver_id;
+          driverMap[a.booking_detail_id].pickAllocId = a.id;
+        }
+        if (a.type === 'Drop') {
+          driverMap[a.booking_detail_id].drop        = a.drivers?.full_name || '—';
+          driverMap[a.booking_detail_id].dropId      = a.driver_id;
+          driverMap[a.booking_detail_id].dropAllocId = a.id;
+        }
+      });
+
+      const items: FleetItem[] = ((details as any[]) || []).map((d: any) => ({
+        id:             d.id,
+        modelId:        d.model_id,
+        vehicleId:      d.vehicle_id || null,
+        name:           d.vehicles?.models
+                          ? `${d.vehicles.models.brand} ${d.vehicles.models.name}`
+                          : '—',
+        registrationNo: d.vehicles?.registration_no || '—',
+        details:        [d.vehicles?.transmission, d.vehicles?.fuel_type]
+                          .filter(Boolean).join(' • ').toUpperCase(),
+        pickDriver:     driverMap[d.id]?.pick        || '—',
+        pickDriverId:   driverMap[d.id]?.pickId      || null,
+        dropDriver:     driverMap[d.id]?.drop        || '—',
+        dropDriverId:   driverMap[d.id]?.dropId      || null,
+        pickAllocationId: driverMap[d.id]?.pickAllocId || null,
+        dropAllocationId: driverMap[d.id]?.dropAllocId || null,
+      }));
+
+      setFleetItems(items);
+
+      // Seed drafts from current saved state
+      const initDrafts: Record<string, FleetDraft> = {};
+      items.forEach(item => {
+        initDrafts[item.id] = {
+          detailId:     item.id,
+          vehicleId:    item.vehicleId    || '',
+          pickDriverId: item.pickDriverId || '',
+          dropDriverId: item.dropDriverId || '',
+        };
+      });
+      setDrafts(initDrafts);
+
+    } catch (e) { console.error(e); }
+    finally { setFleetLoading(false); }
+  };
+
+  useEffect(() => { loadFleet(); }, [bookingId]);
+
+  // ── Enter / cancel edit ───────────────────────────────────
+  const handleEditToggle = () => {
+    if (isEditing) {
+      // cancel — reset drafts to current saved state
+      const reset: Record<string, FleetDraft> = {};
+      fleetItems.forEach(item => {
+        reset[item.id] = {
+          detailId:     item.id,
+          vehicleId:    item.vehicleId    || '',
+          pickDriverId: item.pickDriverId || '',
+          dropDriverId: item.dropDriverId || '',
+        };
+      });
+      setDrafts(reset);
+    }
+    setIsEditing(prev => !prev);
+  };
+
+  // ── Save edits ────────────────────────────────────────────
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      for (const item of fleetItems) {
+        const draft = drafts[item.id];
+        if (!draft) continue;
+
+        // 1. Update vehicle_id on booking_detail
+        if (draft.vehicleId !== (item.vehicleId || '')) {
+          await supabase
+            .from('booking_details')
+            .update({ vehicle_id: draft.vehicleId || null })
+            .eq('id', item.id);
+        }
+
+        // 2. Upsert Pick allocation
+        await upsertAllocation(
+          item,
+          'Pick',
+          draft.pickDriverId,
+          item.pickAllocationId,
+        );
+
+        // 3. Upsert Drop allocation
+        await upsertAllocation(
+          item,
+          'Drop',
+          draft.dropDriverId,
+          item.dropAllocationId,
+        );
+      }
+      toast.success('Booking updated successfully.');
+      setIsEditing(false);
+      await loadFleet(); // refresh to show saved state
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to save changes.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Helper: upsert a Pick or Drop allocation row
+  const upsertAllocation = async (
+    item: FleetItem,
+    type: 'Pick' | 'Drop',
+    newDriverId: string,
+    existingAllocId: string | null,
+  ) => {
+    const existingDriverId = type === 'Pick' ? item.pickDriverId : item.dropDriverId;
+    if (newDriverId === (existingDriverId || '')) return; // no change
+
+    if (!newDriverId) {
+      // Remove allocation if driver cleared
+      if (existingAllocId) {
+        await supabase.from('allocations').delete().eq('id', existingAllocId);
+      }
+      return;
+    }
+
+    if (existingAllocId) {
+      // Update existing
+      await supabase
+        .from('allocations')
+        .update({ driver_id: newDriverId })
+        .eq('id', existingAllocId);
+    } else {
+      // Insert new
+      await supabase.from('allocations').insert({
+        owner_id:          ownerId,
+        booking_detail_id: item.id,
+        driver_id:         newDriverId,
+        type,
+        location:          type === 'Pick' ? booking.pickup_location : booking.drop_location,
+        date_time:         type === 'Pick' ? booking.pickup_at : booking.drop_at,
+        is_confirmed:      false,
+      });
+    }
+  };
+
+  const updateDraft = (detailId: string, field: keyof FleetDraft, value: string) => {
+    setDrafts(prev => ({
+      ...prev,
+      [detailId]: { ...prev[detailId], [field]: value },
+    }));
+  };
 
   const handleConfirmPayment = () => {
-    const amt = parseFloat(paymentState.cashAmount) || 0;
+    const amt  = parseFloat(paymentState.cashAmount) || 0;
     const isPaid = selectedMethod === 'upi' || amt >= paymentState.advanceAmount;
     setPaymentState(prev => ({
       ...prev,
@@ -131,15 +340,14 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'detail
       })
     : '—';
 
-  const totalAmount   = Number(booking.total_amount     || booking.pricing?.total    || 0);
-  const subtotal      = Number(booking.subtotal         || booking.pricing?.subtotal || 0);
-  const surcharge     = Number(booking.surcharge        || 0);
-  const deposit       = Number(booking.security_deposit || 0);
-  const gstAmount     = Number(booking.gst_amount       || 0);
-  const discountAmt   = Number(booking.discount_amount  || 0);
-  const advanceAmount = Number(booking.advance_amount   || booking.pricing?.advance  || 0);
-  const balanceAmount = Number(booking.balance_amount   || booking.pricing?.balance  || 0);
+  const totalAmount = Number(booking.total_amount     || booking.pricing?.total    || 0);
+  const subtotal    = Number(booking.subtotal         || booking.pricing?.subtotal || 0);
+  const surcharge   = Number(booking.surcharge        || 0);
+  const deposit     = Number(booking.security_deposit || 0);
+  const gstAmount   = Number(booking.gst_amount       || 0);
+  const discountAmt = Number(booking.discount_amount  || 0);
 
+  // ── Payment breakdown (Advance Paid + Balance Due removed) ─
   const PaymentBreakdown = () => (
     <div className="space-y-6">
       <h3 className="text-[11px] font-bold text-[#6c7e96] tracking-widest uppercase">Payment Breakdown</h3>
@@ -162,28 +370,24 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'detail
           <span className="font-medium text-[#6c7e96]">GST</span>
           <span className="font-bold text-[#151a3c]">₹{gstAmount.toLocaleString()}.00</span>
         </div>
-        <div className="flex justify-between items-center text-sm pt-1">
-          <span className="font-medium text-[#6c7e96]">Discount</span>
-          <span className="font-semibold text-[#151a3c]">-₹{discountAmt.toLocaleString()}.00</span>
-        </div>
+        {discountAmt > 0 && (
+          <div className="flex justify-between items-center text-sm pt-1">
+            <span className="font-medium text-[#6c7e96]">Discount</span>
+            <span className="font-semibold text-[#10B981]">-₹{discountAmt.toLocaleString()}.00</span>
+          </div>
+        )}
         <div className="h-px bg-[#d1d0eb] w-full my-4" />
+        {/* Total — Advance Paid and Balance Due removed */}
         <div className="flex justify-between items-center">
           <span className="text-base font-bold text-[#151a3c]">Total Amount</span>
           <span className="text-2xl font-black text-[#151a3c]">₹{totalAmount.toLocaleString()}.00</span>
         </div>
-        <div className="flex justify-between items-center text-sm">
-          <span className="font-medium text-[#6c7e96]">Advance Paid</span>
-          <span className="font-bold text-green-600">₹{advanceAmount.toLocaleString()}.00</span>
-        </div>
-        <div className="flex justify-between items-center text-sm">
-          <span className="font-medium text-[#6c7e96]">Balance Due</span>
-          <span className={`font-bold ${balanceAmount > 0 ? 'text-red-500' : 'text-green-600'}`}>
-            ₹{balanceAmount.toLocaleString()}.00
-          </span>
-        </div>
       </div>
     </div>
   );
+
+  // ── Shared select styling ─────────────────────────────────
+  const selectCls = "w-full bg-white border border-[#d1d0eb] rounded-xl py-2 px-3 text-xs font-bold text-[#151a3c] outline-none appearance-none cursor-pointer focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10 transition-all";
 
   return (
     <div className="min-h-screen bg-[#D3D2EC] py-10 px-4 md:px-6">
@@ -220,12 +424,42 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'detail
                 <button className="flex items-center space-x-2 bg-white border border-[#d1d0eb] text-[#6c7e96] px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-[#F8F9FA] transition-colors">
                   <Share2 size={18} /><span>Share</span>
                 </button>
-                <button
-                  onClick={onEdit}
-                  className="flex items-center space-x-2 bg-white border border-[#d1d0eb] text-[#6360DF] px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-[#EEEDFA] transition-colors"
-                >
-                  <Edit size={18} /><span>Edit</span>
-                </button>
+
+                {/* Edit / Cancel toggle */}
+                {isEditing ? (
+                  <button
+                    onClick={handleEditToggle}
+                    className="flex items-center space-x-2 bg-white border border-[#d1d0eb] text-[#6c7e96] px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-[#F8F9FA] transition-colors"
+                  >
+                    <X size={18} /><span>Cancel</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleEditToggle}
+                    className="flex items-center space-x-2 bg-white border border-[#d1d0eb] text-[#6360DF] px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-[#EEEDFA] transition-colors"
+                  >
+                    <Edit size={18} /><span>Edit</span>
+                  </button>
+                )}
+
+                {/* Save button — only visible in edit mode */}
+                <AnimatePresence>
+                  {isEditing && (
+                    <motion.button
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      onClick={handleSave}
+                      disabled={isSaving}
+                      className="flex items-center space-x-2 bg-[#6360DF] hover:bg-[#5451d0] text-white px-5 py-2.5 rounded-lg text-sm font-bold transition-all shadow-md shadow-[#6360df22] disabled:opacity-60"
+                    >
+                      {isSaving
+                        ? <Loader2 size={16} className="animate-spin" />
+                        : <Save size={16} />}
+                      <span>{isSaving ? 'Saving...' : 'Save'}</span>
+                    </motion.button>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
 
@@ -261,14 +495,23 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'detail
                 </div>
               </div>
 
-              {/* ── Selected Fleet — one card per vehicle unit ── */}
+              {/* ── Selected Fleet ── */}
               <div className="space-y-4">
-                <h3 className="text-[11px] font-bold text-[#6c7e96] tracking-widest uppercase text-left">
-                  Selected Fleet
-                  {!fleetLoading && fleetItems.length > 0 && (
-                    <span className="ml-2 normal-case text-[#6360DF]">({fleetItems.length} unit{fleetItems.length !== 1 ? 's' : ''})</span>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[11px] font-bold text-[#6c7e96] tracking-widest uppercase text-left">
+                    Selected Fleet
+                    {!fleetLoading && fleetItems.length > 0 && (
+                      <span className="ml-2 normal-case text-[#6360DF]">
+                        ({fleetItems.length} unit{fleetItems.length !== 1 ? 's' : ''})
+                      </span>
+                    )}
+                  </h3>
+                  {isEditing && (
+                    <span className="text-[10px] font-bold text-[#6360DF] bg-[#EEEDFA] px-3 py-1 rounded-full tracking-wide">
+                      EDITING
+                    </span>
                   )}
-                </h3>
+                </div>
 
                 {fleetLoading ? (
                   <div className="flex items-center justify-center py-8 text-[#6c7e96]">
@@ -281,58 +524,130 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'detail
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {fleetItems.map((item, idx) => (
-                      <div
-                        key={item.id}
-                        className="bg-[#F8F9FA] rounded-xl border border-[#d1d0eb]/20 overflow-hidden"
-                      >
-                        {/* Vehicle identity row */}
-                        <div className="p-4 flex items-center justify-between">
-                          <div className="flex items-center space-x-4">
-                            {/* Unit number badge */}
-                            <div className="w-10 h-10 bg-white border border-[#6360DF] rounded-lg flex items-center justify-center text-[#6360DF] font-extrabold text-sm shrink-0">
-                              {idx + 1}
-                            </div>
-                            <div className="text-left">
-                              <h5 className="text-base font-bold text-[#151a3c] leading-tight">{item.name}</h5>
-                              <p className="text-[12px] font-medium text-[#6c7e96] mt-0.5 uppercase tracking-wide">
-                                {item.details || '—'}
-                              </p>
-                            </div>
-                          </div>
-                          {/* Registration number badge */}
-                          <span className="bg-[#EEEDFA] text-[#6360DF] text-[11px] font-extrabold px-3 py-1.5 rounded-full tracking-widest uppercase shrink-0">
-                            {item.registrationNo}
-                          </span>
-                        </div>
+                    {fleetItems.map((item, idx) => {
+                      const draft   = drafts[item.id] || { vehicleId: '', pickDriverId: '', dropDriverId: '' };
+                      const modelVehicles = vehiclesByModel[item.modelId] || [];
 
-                        {/* Pick / Drop driver row */}
-                        <div className="grid grid-cols-2 border-t border-[#d1d0eb]/30">
-                          <div className="flex items-center space-x-2 px-4 py-3 border-r border-[#d1d0eb]/30">
-                            <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-[9px] font-extrabold rounded-full tracking-widest shrink-0">
-                              PICK
-                            </span>
-                            <div className="flex items-center space-x-1.5 min-w-0">
-                              <UserIcon size={12} className="text-[#6c7e96] shrink-0" />
-                              <span className={`text-xs font-bold truncate ${item.pickDriver === '—' ? 'text-[#6c7e96] italic' : 'text-[#151a3c]'}`}>
-                                {item.pickDriver === '—' ? 'Not assigned' : item.pickDriver}
-                              </span>
+                      // What to show for reg number
+                      const displayReg = isEditing
+                        ? undefined // handled by select
+                        : item.vehicleId
+                          ? item.registrationNo
+                          : '—';
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`rounded-xl border overflow-hidden transition-all ${
+                            isEditing
+                              ? 'border-[#6360DF]/30 bg-[#F5F4FF]'
+                              : 'bg-[#F8F9FA] border-[#d1d0eb]/20'
+                          }`}
+                        >
+                          {/* Vehicle identity row */}
+                          <div className="p-4 flex items-center justify-between gap-3">
+                            <div className="flex items-center space-x-4 flex-1 min-w-0">
+                              {/* Unit number badge */}
+                              <div className="w-10 h-10 bg-white border border-[#6360DF] rounded-lg flex items-center justify-center text-[#6360DF] font-extrabold text-sm shrink-0">
+                                {idx + 1}
+                              </div>
+                              <div className="text-left min-w-0">
+                                <h5 className="text-base font-bold text-[#151a3c] leading-tight">{item.name}</h5>
+                                <p className="text-[12px] font-medium text-[#6c7e96] mt-0.5 uppercase tracking-wide">
+                                  {item.details || '—'}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                          <div className="flex items-center space-x-2 px-4 py-3">
-                            <span className="px-2 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-extrabold rounded-full tracking-widest shrink-0">
-                              DROP
-                            </span>
-                            <div className="flex items-center space-x-1.5 min-w-0">
-                              <UserIcon size={12} className="text-[#6c7e96] shrink-0" />
-                              <span className={`text-xs font-bold truncate ${item.dropDriver === '—' ? 'text-[#6c7e96] italic' : 'text-[#151a3c]'}`}>
-                                {item.dropDriver === '—' ? 'Not assigned' : item.dropDriver}
+
+                            {/* Registration — dropdown in edit mode, badge in view mode */}
+                            {isEditing ? (
+                              <div className="relative w-44 shrink-0">
+                                <select
+                                  value={draft.vehicleId}
+                                  onChange={e => updateDraft(item.id, 'vehicleId', e.target.value)}
+                                  className={selectCls}
+                                >
+                                  <option value="">— Select Vehicle —</option>
+                                  {modelVehicles.map(v => (
+                                    <option key={v.id} value={v.id}>{v.registration_no}</option>
+                                  ))}
+                                </select>
+                                <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
+                              </div>
+                            ) : (
+                              <span className={`text-[11px] font-extrabold px-3 py-1.5 rounded-full tracking-widest uppercase shrink-0 ${
+                                item.vehicleId
+                                  ? 'bg-[#EEEDFA] text-[#6360DF]'
+                                  : 'bg-slate-100 text-slate-400 italic'
+                              }`}>
+                                {displayReg}
                               </span>
+                            )}
+                          </div>
+
+                          {/* Pick / Drop driver row */}
+                          <div className="grid grid-cols-2 border-t border-[#d1d0eb]/30">
+                            {/* Pick driver */}
+                            <div className={`flex items-center space-x-2 px-4 py-3 border-r border-[#d1d0eb]/30 ${isEditing ? 'flex-col items-start space-x-0 space-y-1.5' : ''}`}>
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-[9px] font-extrabold rounded-full tracking-widest shrink-0">
+                                PICK
+                              </span>
+                              {isEditing ? (
+                                <div className="relative w-full">
+                                  <select
+                                    value={draft.pickDriverId}
+                                    onChange={e => updateDraft(item.id, 'pickDriverId', e.target.value)}
+                                    className={selectCls}
+                                  >
+                                    <option value="">— Not Assigned —</option>
+                                    {drivers.map(d => (
+                                      <option key={d.id} value={d.id}>{d.full_name}</option>
+                                    ))}
+                                  </select>
+                                  <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
+                                </div>
+                              ) : (
+                                <div className="flex items-center space-x-1.5 min-w-0">
+                                  <UserIcon size={12} className="text-[#6c7e96] shrink-0" />
+                                  <span className={`text-xs font-bold truncate ${item.pickDriver === '—' ? 'text-[#6c7e96] italic' : 'text-[#151a3c]'}`}>
+                                    {item.pickDriver === '—' ? 'Not assigned' : item.pickDriver}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Drop driver */}
+                            <div className={`flex items-center space-x-2 px-4 py-3 ${isEditing ? 'flex-col items-start space-x-0 space-y-1.5' : ''}`}>
+                              <span className="px-2 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-extrabold rounded-full tracking-widest shrink-0">
+                                DROP
+                              </span>
+                              {isEditing ? (
+                                <div className="relative w-full">
+                                  <select
+                                    value={draft.dropDriverId}
+                                    onChange={e => updateDraft(item.id, 'dropDriverId', e.target.value)}
+                                    className={selectCls}
+                                  >
+                                    <option value="">— Not Assigned —</option>
+                                    {drivers.map(d => (
+                                      <option key={d.id} value={d.id}>{d.full_name}</option>
+                                    ))}
+                                  </select>
+                                  <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6c7e96] pointer-events-none" />
+                                </div>
+                              ) : (
+                                <div className="flex items-center space-x-1.5 min-w-0">
+                                  <UserIcon size={12} className="text-[#6c7e96] shrink-0" />
+                                  <span className={`text-xs font-bold truncate ${item.dropDriver === '—' ? 'text-[#6c7e96] italic' : 'text-[#151a3c]'}`}>
+                                    {item.dropDriver === '—' ? 'Not assigned' : item.dropDriver}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -344,7 +659,7 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'detail
             </div>
           </motion.div>
 
-          {/* ── Sidebar ── */}
+          {/* ── Sidebar (UNCHANGED) ── */}
           <motion.aside
             initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
             className="flex-[3] w-full lg:max-w-[360px] space-y-6"

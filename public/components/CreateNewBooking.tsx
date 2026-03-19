@@ -16,6 +16,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { supabase, getCurrentUser } from '../supabaseClient';
+import { resolveActiveTariff } from './FleetListing';
 
 interface SelectedVehicle {
   id: string;
@@ -24,6 +25,7 @@ interface SelectedVehicle {
   transmission: string;
   fuel: string;
   rate: number;
+  deposit: number;      // ← per-model deposit from tariff
   quantity: number;
   availableCount: number;
 }
@@ -52,31 +54,58 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
   });
 
   const [selectedVehicles, setSelectedVehicles] = useState<SelectedVehicle[]>([]);
-  const [securityDeposit, setSecurityDeposit] = useState(true);
-  const [securityDepositValue, setSecurityDepositValue] = useState<string>('2000');
-  const [editingDeposit, setEditingDeposit] = useState(false);
-  const [locationCharges, setLocationCharges] = useState(true);
-  const [pickupChargeValue, setPickupChargeValue] = useState<string>('0');
-  const [dropChargeValue, setDropChargeValue] = useState<string>('0');
-  const [editingPickupCharge, setEditingPickupCharge] = useState(false);
-  const [editingDropCharge, setEditingDropCharge] = useState(false);
-  const [discountEnabled, setDiscountEnabled] = useState(false);
-  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
-  const [discountValue, setDiscountValue] = useState<string>('0');
-  const [filters, setFilters] = useState({ transmission: 'All', fuel: 'All', type: 'All' });
 
-  // Raw fleet from DB (all vehicles, status=available)
-  const [fleetData, setFleetData] = useState<Record<string, any[]>>({});
+  // Security deposit — hidden until at least one vehicle is selected
+  // depositOverride: null = use auto (sum from tariff), string = user has manually edited
+  const [depositOverride,   setDepositOverride]   = useState<string | null>(null);
+  const [editingDeposit,    setEditingDeposit]     = useState(false);
+
+  const [locationCharges,    setLocationCharges]    = useState(true);
+  const [pickupChargeValue,  setPickupChargeValue]  = useState<string>('0');
+  const [dropChargeValue,    setDropChargeValue]    = useState<string>('0');
+  const [editingPickupCharge, setEditingPickupCharge] = useState(false);
+  const [editingDropCharge,   setEditingDropCharge]   = useState(false);
+  const [discountEnabled,    setDiscountEnabled]    = useState(false);
+  const [discountType,       setDiscountType]       = useState<'percentage' | 'fixed'>('percentage');
+  const [discountValue,      setDiscountValue]      = useState<string>('0');
+  const [filters,            setFilters]            = useState({ transmission: 'All', fuel: 'All', type: 'All' });
+
+  // Raw fleet from DB
+  const [fleetData,    setFleetData]    = useState<Record<string, any[]>>({});
   const [fleetLoading, setFleetLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [isSaving,     setIsSaving]     = useState(false);
+  const [ownerId,      setOwnerId]      = useState<string | null>(null);
 
   // Set of vehicle IDs that are booked in the selected date range
-  const [bookedVehicleIds, setBookedVehicleIds] = useState<Set<string>>(new Set());
+  const [bookedVehicleIds,    setBookedVehicleIds]    = useState<Set<string>>(new Set());
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
 
   // Service locations
   const [serviceLocations, setServiceLocations] = useState<{location_name: string; surcharge: number; night_surcharge: number}[]>([]);
+
+  // ── Derived: auto deposit = sum of (model deposit × quantity) ──
+  // This is recalculated whenever selectedVehicles changes
+  const autoDepositTotal = useMemo(() =>
+    selectedVehicles.reduce((acc, sv) => acc + sv.deposit * sv.quantity, 0),
+  [selectedVehicles]);
+
+  // Deposit is visible only when at least one vehicle is selected
+  const showDeposit = selectedVehicles.length > 0;
+
+  // The displayed deposit value: override if user edited, else auto
+  const depositDisplayValue = depositOverride !== null
+    ? depositOverride
+    : String(autoDepositTotal);
+
+  // Reset deposit override when vehicles change (so it stays auto unless user edits again)
+  // We do NOT reset if user has already manually overridden — they own it until they remove vehicles
+  // Actually: reset override when all vehicles are removed
+  useEffect(() => {
+    if (selectedVehicles.length === 0) {
+      setDepositOverride(null);
+      setEditingDeposit(false);
+    }
+  }, [selectedVehicles.length]);
 
   // ── Load fleet from DB ─────────────────────────────────────
   const loadFleet = async () => {
@@ -96,8 +125,8 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       .eq('owner_id', ownerRow.id)
       .order('created_at', { ascending: true });
     const locs = (locData || []).map((l: any) => ({
-      location_name: l.location_name,
-      surcharge: l.surcharge || 0,
+      location_name:  l.location_name,
+      surcharge:      l.surcharge      || 0,
       night_surcharge: l.night_surcharge || 0,
     }));
     setServiceLocations(locs);
@@ -110,16 +139,26 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         dropLocation:   prev.dropLocation   || locs[0].location_name,
       }));
       setPickupChargeValue(String(locs[0].surcharge || 0));
-      setDropChargeValue(String(locs[0].surcharge || 0));
+      setDropChargeValue(String(locs[0].surcharge   || 0));
     }
 
-    // Load tariffs
+    // Load tariffs — use same priority resolution as Fleet Listing
+    const today = new Date().toISOString().split('T')[0];
     const { data: tariffData } = await supabase
       .from('tariffs')
-      .select('model_id, rate_per_day')
+      .select('model_id, rate_per_day, security_deposit, effective_from, effective_to, is_override')
       .eq('owner_id', ownerRow.id);
-    const tariffMap: Record<string, number> = {};
-    ((tariffData as any[]) || []).forEach((t: any) => { tariffMap[t.model_id] = t.rate_per_day; });
+    const allTariffs: any[] = (tariffData as any[]) || [];
+
+    // Build rate map AND deposit map per model
+    const tariffMap:   Record<string, number> = {};
+    const depositMap:  Record<string, number> = {};
+    const uniqueModelIds = [...new Set(allTariffs.map((t: any) => t.model_id as string))];
+    uniqueModelIds.forEach(modelId => {
+      const resolved = resolveActiveTariff(allTariffs, modelId, today);
+      if (resolved.rate    !== null) tariffMap[modelId]  = resolved.rate;
+      if (resolved.deposit !== null) depositMap[modelId] = resolved.deposit;
+    });
 
     // Load all non-maintenance vehicles
     const { data, error } = await supabase
@@ -135,15 +174,17 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       const model = v.models;
       if (!model) return;
       if (!modelMap[model.id]) {
-        const rate = tariffMap[model.id] ?? model.base_rate_per_day ?? 1500;
+        const rate    = tariffMap[model.id]  ?? model.base_rate_per_day ?? 1500;
+        const deposit = depositMap[model.id] ?? 0;
         modelMap[model.id] = {
-          id: model.id,
-          name: `${model.brand} ${model.name}`,
-          trans: v.transmission || model.default_transmission,
-          fuel: v.fuel_type || model.default_fuel_type,
+          id:       model.id,
+          name:     `${model.brand} ${model.name}`,
+          trans:    v.transmission || model.default_transmission,
+          fuel:     v.fuel_type    || model.default_fuel_type,
           category: model.categories?.name?.toUpperCase() || 'OTHERS',
           rate,
-          vehicles: [],
+          deposit,   // ← stored per model
+          vehicles:  [],
         };
       }
       modelMap[model.id].vehicles.push(v.id);
@@ -153,10 +194,14 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     Object.values(modelMap).forEach((m: any) => {
       if (!grouped[m.category]) grouped[m.category] = [];
       grouped[m.category].push({
-        id: m.id, name: m.name, trans: m.trans, fuel: m.fuel,
+        id:         m.id,
+        name:       m.name,
+        trans:      m.trans,
+        fuel:       m.fuel,
         totalCount: m.vehicles.length,
         vehicleIds: m.vehicles,
-        rate: m.rate,
+        rate:       m.rate,
+        deposit:    m.deposit,   // ← passed through to fleet table
       });
     });
 
@@ -191,7 +236,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         const pickupISO = new Date(customerData.pickupDateTime).toISOString();
         const returnISO = new Date(customerData.returnDateTime).toISOString();
 
-        // Find booking_details whose booking overlaps our requested range
         // Overlap condition: booking.pickup_at < our returnISO AND booking.drop_at > our pickupISO
         const { data } = await supabase
           .from('booking_details')
@@ -217,14 +261,14 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     const result: Record<string, any[]> = {};
     Object.entries(fleetData).forEach(([category, models]) => {
       const enriched = models.map(m => {
-        const freeIds = m.vehicleIds.filter((vid: string) => !bookedVehicleIds.has(vid));
+        const freeIds        = m.vehicleIds.filter((vid: string) => !bookedVehicleIds.has(vid));
         const availableCount = freeIds.length;
         return {
           ...m,
           availableCount,
           freeVehicleIds: freeIds,
-          available: `${availableCount}/${m.totalCount}`,
-          fullyBooked: availableCount === 0,
+          available:      `${availableCount}/${m.totalCount}`,
+          fullyBooked:    availableCount === 0,
         };
       });
       result[category] = enriched;
@@ -237,9 +281,9 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     const result: Record<string, any[]> = {};
     Object.entries(fleetWithAvailability).forEach(([category, vehicles]) => {
       const filtered = vehicles.filter(v => {
-        const transMatch = filters.transmission === 'All' || v.trans === filters.transmission;
-        const fuelMatch  = filters.fuel === 'All' || v.fuel === filters.fuel;
-        const typeMatch  = filters.type === 'All' || category.includes(filters.type.toUpperCase());
+        const transMatch     = filters.transmission === 'All' || v.trans === filters.transmission;
+        const fuelMatch      = filters.fuel          === 'All' || v.fuel  === filters.fuel;
+        const typeMatch      = filters.type          === 'All' || category.includes(filters.type.toUpperCase());
         // Only hide fully-booked models when dates are set
         const availableMatch = !customerData.pickupDateTime || !customerData.returnDateTime || !v.fullyBooked;
         return transMatch && fuelMatch && typeMatch && availableMatch;
@@ -254,9 +298,15 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       const existing = prev.find(item => item.id === v.id);
       if (action === 'add') {
         return [...prev, {
-          id: v.id, vehicleId: v.freeVehicleIds?.[0] ?? v.vehicleIds[0], name: v.name,
-          transmission: v.trans, fuel: v.fuel, rate: v.rate,
-          quantity: 1, availableCount: v.availableCount ?? v.totalCount,
+          id:            v.id,
+          vehicleId:     v.freeVehicleIds?.[0] ?? v.vehicleIds[0],
+          name:          v.name,
+          transmission:  v.trans,
+          fuel:          v.fuel,
+          rate:          v.rate,
+          deposit:       v.deposit ?? 0,   // ← from tariff
+          quantity:      1,
+          availableCount: v.availableCount ?? v.totalCount,
         }];
       }
       if (action === 'inc') {
@@ -294,15 +344,23 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     && customerData.fullName && customerData.phone
     && customerData.pickupDateTime && customerData.returnDateTime;
 
+  // ── Calculations ───────────────────────────────────────────
   const calculations = useMemo(() => {
-    const subtotal  = selectedVehicles.reduce((acc, curr) => acc + (curr.rate * curr.quantity), 0);
-    // Use editable pickup + drop surcharges when enabled, else 0
+    const subtotal = selectedVehicles.reduce((acc, curr) => acc + (curr.rate * curr.quantity), 0);
+
+    // Location charges — editable pickup + drop surcharges when enabled
     const surcharge = locationCharges && selectedVehicles.length > 0
       ? (parseFloat(pickupChargeValue) || 0) + (parseFloat(dropChargeValue) || 0)
       : 0;
-    // Use editable deposit value when enabled, else 0
-    const deposit = securityDeposit ? (parseFloat(securityDepositValue) || 0) : 0;
-    const val       = parseFloat(discountValue) || 0;
+
+    // Security deposit — use override if user edited, else auto-sum from tariffs
+    // Only included when at least one vehicle is selected
+    const deposit = showDeposit
+      ? (parseFloat(depositDisplayValue) || 0)
+      : 0;
+
+    // Discount
+    const val = parseFloat(discountValue) || 0;
     let discountAmount = 0, error = '';
     if (discountEnabled) {
       if (discountType === 'percentage') {
@@ -313,11 +371,18 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         discountAmount = Math.min(val, subtotal);
       }
     }
+
+    // GST applies on (subtotal + surcharge - discount), NOT on deposit
     const taxableAmount = Math.max(0, subtotal + surcharge - discountAmount);
     const gst   = taxableAmount * 0.18;
     const total = taxableAmount + deposit + gst;
+
     return { subtotal, surcharge, deposit, gst, total, discountAmount, error };
-  }, [selectedVehicles, securityDeposit, securityDepositValue, locationCharges, pickupChargeValue, dropChargeValue, discountType, discountValue, discountEnabled]);
+  }, [
+    selectedVehicles, showDeposit, depositDisplayValue,
+    locationCharges, pickupChargeValue, dropChargeValue,
+    discountType, discountValue, discountEnabled,
+  ]);
 
   // ── Save booking ───────────────────────────────────────────
   const handleConfirm = async () => {
@@ -329,28 +394,28 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       const { data: bookingRow, error: bookingErr } = await supabase
         .from('bookings')
         .insert({
-          owner_id: ownerId,
+          owner_id:          ownerId,
           booking_reference: ref,
-          customer_name:  customerData.fullName.trim(),
-          customer_phone: `+91 ${customerData.phone.trim()}`,
-          customer_email: null,
-          pickup_location: customerData.pickupLocation,
-          drop_location:   customerData.dropLocation,
-          pickup_at: new Date(customerData.pickupDateTime).toISOString(),
-          drop_at:   new Date(customerData.returnDateTime).toISOString(),
-          status: 'BOOKED',
-          no_of_vehicles:   totalSelectedCount,
-          subtotal:         calculations.subtotal,
-          surcharge:        calculations.surcharge,
-          security_deposit: calculations.deposit,
-          discount_type:    discountEnabled ? discountType : null,
-          discount_value:   discountEnabled ? parseFloat(discountValue) : 0,
-          discount_amount:  calculations.discountAmount,
-          gst_amount:       Math.round(calculations.gst),
-          total_amount:     Math.round(calculations.total),
-          advance_amount:   0,
-          balance_amount:   Math.round(calculations.total),
-          payment_status:   'UNPAID',
+          customer_name:     customerData.fullName.trim(),
+          customer_phone:    `+91 ${customerData.phone.trim()}`,
+          customer_email:    null,
+          pickup_location:   customerData.pickupLocation,
+          drop_location:     customerData.dropLocation,
+          pickup_at:         new Date(customerData.pickupDateTime).toISOString(),
+          drop_at:           new Date(customerData.returnDateTime).toISOString(),
+          status:            'BOOKED',
+          no_of_vehicles:    totalSelectedCount,
+          subtotal:          calculations.subtotal,
+          surcharge:         calculations.surcharge,
+          security_deposit:  calculations.deposit,
+          discount_type:     discountEnabled ? discountType : null,
+          discount_value:    discountEnabled ? parseFloat(discountValue) : 0,
+          discount_amount:   calculations.discountAmount,
+          gst_amount:        Math.round(calculations.gst),
+          total_amount:      Math.round(calculations.total),
+          advance_amount:    0,
+          balance_amount:    Math.round(calculations.total),
+          payment_status:    'UNPAID',
         })
         .select('*')
         .single();
@@ -367,16 +432,16 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         const freeIds: string[] = modelEntry?.freeVehicleIds ?? (sv.vehicleId ? [sv.vehicleId] : []);
         for (let i = 0; i < sv.quantity; i++) {
           detailRows.push({
-            owner_id:      ownerId,
-            booking_id:    bookingRow.id,
-            vehicle_id:    freeIds[i] ?? freeIds[0],
-            model_id:      sv.id,
-            quantity:      1,
-            daily_rate:    sv.rate,
-            line_subtotal: sv.rate,
+            owner_id:        ownerId,
+            booking_id:      bookingRow.id,
+            vehicle_id:      freeIds[i] ?? freeIds[0],
+            model_id:        sv.id,
+            quantity:        1,
+            daily_rate:      sv.rate,
+            line_subtotal:   sv.rate,
             discount_amount: 0,
-            tax_amount:    0,
-            total_amount:  sv.rate,
+            tax_amount:      0,
+            total_amount:    sv.rate,
           });
         }
       }
@@ -511,9 +576,9 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {[
-                  { key: 'transmission', opts: ['All','Manual','Automatic'] },
-                  { key: 'fuel',         opts: ['All','Petrol','Diesel','CNG','Electric'] },
-                  { key: 'type',         opts: ['All','Hatchback','Sedan','SUV','MUV'] },
+                  { key: 'transmission', opts: ['All', 'Manual', 'Automatic'] },
+                  { key: 'fuel',         opts: ['All', 'Petrol', 'Diesel', 'CNG', 'Electric'] },
+                  { key: 'type',         opts: ['All', 'Hatchback', 'Sedan', 'SUV', 'MUV'] },
                 ].map(({ key, opts }) => (
                   <div key={key} className="relative">
                     <select value={(filters as any)[key]}
@@ -560,10 +625,10 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                           <td colSpan={6} className="px-4 py-2.5 text-[10px] font-extrabold text-[#6360DF] tracking-widest">{category}</td>
                         </tr>
                         {(vehicles as any[]).map(v => {
-                          const selected = selectedVehicles.find(sv => sv.id === v.id);
-                          const datesSet = !!(customerData.pickupDateTime && customerData.returnDateTime);
-                          const availCount = datesSet ? v.availableCount : v.totalCount;
-                          const isLow = availCount <= 2 && availCount > 0;
+                          const selected    = selectedVehicles.find(sv => sv.id === v.id);
+                          const datesSet    = !!(customerData.pickupDateTime && customerData.returnDateTime);
+                          const availCount  = datesSet ? v.availableCount : v.totalCount;
+                          const isLow       = availCount <= 2 && availCount > 0;
 
                           return (
                             <tr key={v.id} className="border-b border-[#d1d0eb]/10 last:border-0 hover:bg-[#F8F9FA] transition-colors">
@@ -571,12 +636,8 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                               <td className="py-4 text-[#6c7e96] text-xs font-semibold">{v.trans}</td>
                               <td className="py-4 text-[#6c7e96] text-xs font-semibold">{v.fuel}</td>
                               <td className="py-4 text-center">
-                                <span className={`text-xs font-extrabold ${
-                                  isLow ? 'text-[#F59E0B]' : 'text-[#10B981]'
-                                }`}>
-                                  {datesSet
-                                    ? `${availCount}/${v.totalCount}`
-                                    : `${v.totalCount}/${v.totalCount}`}
+                                <span className={`text-xs font-extrabold ${isLow ? 'text-[#F59E0B]' : 'text-[#10B981]'}`}>
+                                  {datesSet ? `${availCount}/${v.totalCount}` : `${v.totalCount}/${v.totalCount}`}
                                 </span>
                                 {datesSet && availCount < v.totalCount && (
                                   <span className="block text-[9px] text-[#F59E0B] font-bold mt-0.5">
@@ -619,6 +680,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
               <h3 className="text-xl font-extrabold tracking-tight">Booking Summary</h3>
             </div>
             <div className="p-8 space-y-8">
+
               {/* Customer preview */}
               <div className="space-y-4">
                 <p className="text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase">Customer Information</p>
@@ -681,7 +743,8 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
               {/* Price breakdown */}
               <div className="space-y-3">
-                {/* Subtotal — static */}
+
+                {/* Subtotal */}
                 <div className="flex justify-between text-sm">
                   <span className="font-semibold text-[#6c7e96]">Subtotal</span>
                   <span className="font-extrabold text-[#151a3c]">₹{calculations.subtotal.toLocaleString()}.00</span>
@@ -700,7 +763,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                       </span>
                     )}
                   </div>
-
                   {locationCharges && (
                     <div className="pl-6 space-y-1.5">
                       {/* Pickup charge row */}
@@ -708,15 +770,11 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                         <span className="text-[#6c7e96] font-medium">↑ Pickup · {customerData.pickupLocation || '—'}</span>
                         <div className="flex items-center space-x-1.5">
                           {editingPickupCharge ? (
-                            <input
-                              autoFocus
-                              type="number" min="0"
-                              value={pickupChargeValue}
+                            <input autoFocus type="number" min="0" value={pickupChargeValue}
                               onChange={e => setPickupChargeValue(e.target.value)}
                               onBlur={() => setEditingPickupCharge(false)}
                               onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingPickupCharge(false); }}
-                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none"
-                            />
+                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none" />
                           ) : (
                             <>
                               <span className="font-bold text-[#151a3c]">₹{(parseFloat(pickupChargeValue) || 0).toLocaleString()}.00</span>
@@ -730,21 +788,16 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                           )}
                         </div>
                       </div>
-
                       {/* Drop charge row */}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-[#6c7e96] font-medium">↓ Drop · {customerData.dropLocation || '—'}</span>
                         <div className="flex items-center space-x-1.5">
                           {editingDropCharge ? (
-                            <input
-                              autoFocus
-                              type="number" min="0"
-                              value={dropChargeValue}
+                            <input autoFocus type="number" min="0" value={dropChargeValue}
                               onChange={e => setDropChargeValue(e.target.value)}
                               onBlur={() => setEditingDropCharge(false)}
                               onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDropCharge(false); }}
-                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none"
-                            />
+                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none" />
                           ) : (
                             <>
                               <span className="font-bold text-[#151a3c]">₹{(parseFloat(dropChargeValue) || 0).toLocaleString()}.00</span>
@@ -762,41 +815,72 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                   )}
                 </div>
 
-                {/* Security Deposit — checkbox + editable */}
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center space-x-2">
-                    <input type="checkbox" checked={securityDeposit}
-                      onChange={() => { setSecurityDeposit(v => !v); setEditingDeposit(false); }}
-                      className="w-4 h-4 rounded text-[#6360DF] focus:ring-[#6360DF]" />
-                    <span className="font-semibold text-[#6c7e96]">Security Deposit</span>
-                  </div>
-                  {securityDeposit && (
-                    <div className="flex items-center space-x-1.5">
-                      {editingDeposit ? (
-                        <input
-                          autoFocus
-                          type="number" min="0"
-                          value={securityDepositValue}
-                          onChange={e => setSecurityDepositValue(e.target.value)}
-                          onBlur={() => setEditingDeposit(false)}
-                          onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDeposit(false); }}
-                          className="w-20 text-right font-extrabold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-sm outline-none"
-                        />
-                      ) : (
-                        <>
-                          <span className="font-extrabold text-[#151a3c]">₹{(parseFloat(securityDepositValue) || 0).toLocaleString()}.00</span>
-                          <button
-                            onClick={() => setEditingDeposit(true)}
-                            className="p-1 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded-lg transition-all">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                            </svg>
-                          </button>
-                        </>
+                {/* Security Deposit — hidden until a vehicle is selected, then auto from tariff */}
+                <AnimatePresence>
+                  {showDeposit && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden">
+                      <div className="flex items-center justify-between text-sm pt-0.5">
+                        <div className="flex items-center space-x-2">
+                          {/* Checkbox kept for UI parity — deposit always shown when vehicle selected */}
+                          <input type="checkbox" checked readOnly
+                            className="w-4 h-4 rounded text-[#6360DF] focus:ring-[#6360DF] cursor-default" />
+                          <span className="font-semibold text-[#6c7e96]">Security Deposit</span>
+                        </div>
+                        <div className="flex items-center space-x-1.5">
+                          {editingDeposit ? (
+                            <input
+                              autoFocus
+                              type="number" min="0"
+                              value={depositDisplayValue}
+                              onChange={e => setDepositOverride(e.target.value)}
+                              onBlur={() => setEditingDeposit(false)}
+                              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDeposit(false); }}
+                              className="w-20 text-right font-extrabold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-sm outline-none"
+                            />
+                          ) : (
+                            <>
+                              <span className="font-extrabold text-[#151a3c]">
+                                ₹{(parseFloat(depositDisplayValue) || 0).toLocaleString()}.00
+                              </span>
+                              <button
+                                onClick={() => setEditingDeposit(true)}
+                                className="p-1 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded-lg transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                              </button>
+                              {/* Show reset hint if user has overridden */}
+                              {depositOverride !== null && (
+                                <button
+                                  onClick={() => setDepositOverride(null)}
+                                  title="Reset to tariff default"
+                                  className="text-[9px] font-bold text-[#6360DF] hover:underline ml-1">
+                                  reset
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {/* Per-model deposit breakdown when multiple models selected */}
+                      {selectedVehicles.length > 1 && depositOverride === null && (
+                        <div className="pl-6 mt-1.5 space-y-1">
+                          {selectedVehicles.map(sv => (
+                            <div key={sv.id} className="flex items-center justify-between text-xs">
+                              <span className="text-[#6c7e96] font-medium truncate max-w-[170px]">{sv.name} ×{sv.quantity}</span>
+                              <span className="font-bold text-[#151a3c]">₹{(sv.deposit * sv.quantity).toLocaleString()}.00</span>
+                            </div>
+                          ))}
+                        </div>
                       )}
-                    </div>
+                    </motion.div>
                   )}
-                </div>
+                </AnimatePresence>
 
                 {/* GST */}
                 <div className="flex justify-between text-sm">
@@ -895,6 +979,5 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     </div>
   );
 };
-
 
 export default CreateNewBooking;
