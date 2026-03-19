@@ -97,9 +97,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     ? depositOverride
     : String(autoDepositTotal);
 
-  // Reset deposit override when vehicles change (so it stays auto unless user edits again)
-  // We do NOT reset if user has already manually overridden — they own it until they remove vehicles
-  // Actually: reset override when all vehicles are removed
+  // Reset deposit override when all vehicles are removed
   useEffect(() => {
     if (selectedVehicles.length === 0) {
       setDepositOverride(null);
@@ -125,8 +123,8 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       .eq('owner_id', ownerRow.id)
       .order('created_at', { ascending: true });
     const locs = (locData || []).map((l: any) => ({
-      location_name:  l.location_name,
-      surcharge:      l.surcharge      || 0,
+      location_name:   l.location_name,
+      surcharge:       l.surcharge       || 0,
       night_surcharge: l.night_surcharge || 0,
     }));
     setServiceLocations(locs);
@@ -151,8 +149,8 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     const allTariffs: any[] = (tariffData as any[]) || [];
 
     // Build rate map AND deposit map per model
-    const tariffMap:   Record<string, number> = {};
-    const depositMap:  Record<string, number> = {};
+    const tariffMap:  Record<string, number> = {};
+    const depositMap: Record<string, number> = {};
     const uniqueModelIds = [...new Set(allTariffs.map((t: any) => t.model_id as string))];
     uniqueModelIds.forEach(modelId => {
       const resolved = resolveActiveTariff(allTariffs, modelId, today);
@@ -298,14 +296,14 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       const existing = prev.find(item => item.id === v.id);
       if (action === 'add') {
         return [...prev, {
-          id:            v.id,
-          vehicleId:     v.freeVehicleIds?.[0] ?? v.vehicleIds[0],
-          name:          v.name,
-          transmission:  v.trans,
-          fuel:          v.fuel,
-          rate:          v.rate,
-          deposit:       v.deposit ?? 0,   // ← from tariff
-          quantity:      1,
+          id:             v.id,
+          vehicleId:      v.freeVehicleIds?.[0] ?? v.vehicleIds[0],
+          name:           v.name,
+          transmission:   v.trans,
+          fuel:           v.fuel,
+          rate:           v.rate,
+          deposit:        v.deposit ?? 0,   // ← from tariff
+          quantity:       1,
           availableCount: v.availableCount ?? v.totalCount,
         }];
       }
@@ -348,9 +346,12 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
   const calculations = useMemo(() => {
     const subtotal = selectedVehicles.reduce((acc, curr) => acc + (curr.rate * curr.quantity), 0);
 
-    // Location charges — editable pickup + drop surcharges when enabled
+    // ── CHANGED: Location charges scale with total vehicle count ──
+    // Each vehicle incurs the same pickup + drop surcharge.
+    // e.g. 3 vehicles × (₹100 pickup + ₹100 drop) = ₹600 total surcharge
+    const perVehicleCharge = (parseFloat(pickupChargeValue) || 0) + (parseFloat(dropChargeValue) || 0);
     const surcharge = locationCharges && selectedVehicles.length > 0
-      ? (parseFloat(pickupChargeValue) || 0) + (parseFloat(dropChargeValue) || 0)
+      ? perVehicleCharge * totalSelectedCount
       : 0;
 
     // Security deposit — use override if user edited, else auto-sum from tariffs
@@ -379,7 +380,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
     return { subtotal, surcharge, deposit, gst, total, discountAmount, error };
   }, [
-    selectedVehicles, showDeposit, depositDisplayValue,
+    selectedVehicles, totalSelectedCount, showDeposit, depositDisplayValue,
     locationCharges, pickupChargeValue, dropChargeValue,
     discountType, discountValue, discountEnabled,
   ]);
@@ -459,6 +460,10 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       setIsSaving(false);
     }
   };
+
+  // ── Convenience: per-vehicle charge amounts (for display) ──
+  const pickupChargePerVehicle = parseFloat(pickupChargeValue) || 0;
+  const dropChargePerVehicle   = parseFloat(dropChargeValue)   || 0;
 
   return (
     <div className="max-w-7xl mx-auto pb-20">
@@ -625,10 +630,10 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                           <td colSpan={6} className="px-4 py-2.5 text-[10px] font-extrabold text-[#6360DF] tracking-widest">{category}</td>
                         </tr>
                         {(vehicles as any[]).map(v => {
-                          const selected    = selectedVehicles.find(sv => sv.id === v.id);
-                          const datesSet    = !!(customerData.pickupDateTime && customerData.returnDateTime);
-                          const availCount  = datesSet ? v.availableCount : v.totalCount;
-                          const isLow       = availCount <= 2 && availCount > 0;
+                          const selected   = selectedVehicles.find(sv => sv.id === v.id);
+                          const datesSet   = !!(customerData.pickupDateTime && customerData.returnDateTime);
+                          const availCount = datesSet ? v.availableCount : v.totalCount;
+                          const isLow      = availCount <= 2 && availCount > 0;
 
                           return (
                             <tr key={v.id} className="border-b border-[#d1d0eb]/10 last:border-0 hover:bg-[#F8F9FA] transition-colors">
@@ -750,7 +755,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                   <span className="font-extrabold text-[#151a3c]">₹{calculations.subtotal.toLocaleString()}.00</span>
                 </div>
 
-                {/* Location Charges — checkbox + split pickup/drop editable */}
+                {/* Location Charges — total shown is per-vehicle rate × vehicle count */}
                 <div className="space-y-2">
                   <div className="flex items-center space-x-2">
                     <input type="checkbox" checked={locationCharges}
@@ -759,25 +764,38 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                     <span className="text-sm font-semibold text-[#6c7e96]">Location Charges</span>
                     {locationCharges && (
                       <span className="ml-auto text-sm font-extrabold text-[#151a3c]">
-                        ₹{((parseFloat(pickupChargeValue) || 0) + (parseFloat(dropChargeValue) || 0)).toLocaleString()}.00
+                        ₹{calculations.surcharge.toLocaleString()}.00
                       </span>
                     )}
                   </div>
+
                   {locationCharges && (
                     <div className="pl-6 space-y-1.5">
-                      {/* Pickup charge row */}
+                      {/* Pickup charge row — shows per-vehicle rate × count */}
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-[#6c7e96] font-medium">↑ Pickup · {customerData.pickupLocation || '—'}</span>
+                        <span className="text-[#6c7e96] font-medium">
+                          ↑ Pickup · {customerData.pickupLocation || '—'}
+                          {totalSelectedCount > 1 && (
+                            <span className="text-[#6360DF] font-bold ml-1">×{totalSelectedCount}</span>
+                          )}
+                        </span>
                         <div className="flex items-center space-x-1.5">
                           {editingPickupCharge ? (
-                            <input autoFocus type="number" min="0" value={pickupChargeValue}
+                            <input
+                              autoFocus
+                              type="number" min="0"
+                              value={pickupChargeValue}
                               onChange={e => setPickupChargeValue(e.target.value)}
                               onBlur={() => setEditingPickupCharge(false)}
                               onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingPickupCharge(false); }}
-                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none" />
+                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none"
+                            />
                           ) : (
                             <>
-                              <span className="font-bold text-[#151a3c]">₹{(parseFloat(pickupChargeValue) || 0).toLocaleString()}.00</span>
+                              {/* ── CHANGED: show per-vehicle × count ── */}
+                              <span className="font-bold text-[#151a3c]">
+                                ₹{(pickupChargePerVehicle * totalSelectedCount).toLocaleString()}.00
+                              </span>
                               <button onClick={() => setEditingPickupCharge(true)}
                                 className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -788,19 +806,32 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                           )}
                         </div>
                       </div>
-                      {/* Drop charge row */}
+
+                      {/* Drop charge row — shows per-vehicle rate × count */}
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-[#6c7e96] font-medium">↓ Drop · {customerData.dropLocation || '—'}</span>
+                        <span className="text-[#6c7e96] font-medium">
+                          ↓ Drop · {customerData.dropLocation || '—'}
+                          {totalSelectedCount > 1 && (
+                            <span className="text-[#6360DF] font-bold ml-1">×{totalSelectedCount}</span>
+                          )}
+                        </span>
                         <div className="flex items-center space-x-1.5">
                           {editingDropCharge ? (
-                            <input autoFocus type="number" min="0" value={dropChargeValue}
+                            <input
+                              autoFocus
+                              type="number" min="0"
+                              value={dropChargeValue}
                               onChange={e => setDropChargeValue(e.target.value)}
                               onBlur={() => setEditingDropCharge(false)}
                               onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDropCharge(false); }}
-                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none" />
+                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none"
+                            />
                           ) : (
                             <>
-                              <span className="font-bold text-[#151a3c]">₹{(parseFloat(dropChargeValue) || 0).toLocaleString()}.00</span>
+                              {/* ── CHANGED: show per-vehicle × count ── */}
+                              <span className="font-bold text-[#151a3c]">
+                                ₹{(dropChargePerVehicle * totalSelectedCount).toLocaleString()}.00
+                              </span>
                               <button onClick={() => setEditingDropCharge(true)}
                                 className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
