@@ -14,6 +14,7 @@ import {
   Loader2,
   Info,
   ChevronRight,
+  Moon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -27,8 +28,8 @@ interface SelectedVehicle {
   name: string;
   transmission: string;
   fuel: string;
-  rate: number;       // rate per day
-  deposit: number;    // per-model deposit from tariff
+  rate: number;
+  deposit: number;
   quantity: number;
   availableCount: number;
 }
@@ -36,6 +37,42 @@ interface SelectedVehicle {
 interface CreateNewBookingProps {
   onBack: () => void;
   onConfirm: (bookingRow: any) => void;
+}
+
+// ── Night time-point check ────────────────────────────────────
+// Returns true if a specific datetime falls within the night window.
+// Handles midnight-wrapping windows (e.g. 22:00 → 06:00).
+function isTimeInNightWindow(
+  isoDateTime: string,
+  nightFrom:   string, // "HH:MM"
+  nightTo:     string, // "HH:MM"
+): boolean {
+  if (!nightFrom || !nightTo || !isoDateTime) return false;
+  const dt = new Date(isoDateTime);
+  const [nfH, nfM] = nightFrom.split(':').map(Number);
+  const [ntH, ntM] = nightTo.split(':').map(Number);
+  const pointMins = dt.getHours() * 60 + dt.getMinutes();
+  const nfMins    = nfH * 60 + nfM;
+  const ntMins    = ntH * 60 + ntM;
+  const nightWraps = nfMins > ntMins; // e.g. 22:00 > 06:00
+  if (nightWraps) {
+    return pointMins >= nfMins || pointMins < ntMins;
+  }
+  return pointMins >= nfMins && pointMins < ntMins;
+}
+
+// ── hasNightOverlap: true if EITHER pickup or drop is in night window ─
+// Used for showing the Night Charges section at all.
+function bookingTouchesNight(
+  pickupISO: string,
+  dropISO:   string,
+  nightFrom: string,
+  nightTo:   string,
+): boolean {
+  return (
+    isTimeInNightWindow(pickupISO, nightFrom, nightTo) ||
+    isTimeInNightWindow(dropISO,   nightFrom, nightTo)
+  );
 }
 
 const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }) => {
@@ -58,19 +95,27 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   const [selectedVehicles, setSelectedVehicles] = useState<SelectedVehicle[]>([]);
 
-  // Security deposit — hidden until at least one vehicle is selected
-  const [depositOverride,   setDepositOverride]   = useState<string | null>(null);
-  const [editingDeposit,    setEditingDeposit]     = useState(false);
+  // Security deposit — checkbox hides amount but deposit always saved to DB
+  const [depositEnabled,  setDepositEnabled]  = useState(true);
+  const [depositOverride, setDepositOverride] = useState<string | null>(null);
+  const [editingDeposit,  setEditingDeposit]  = useState(false);
 
   const [locationCharges,     setLocationCharges]     = useState(true);
   const [pickupChargeValue,   setPickupChargeValue]   = useState<string>('0');
   const [dropChargeValue,     setDropChargeValue]     = useState<string>('0');
   const [editingPickupCharge, setEditingPickupCharge] = useState(false);
   const [editingDropCharge,   setEditingDropCharge]   = useState(false);
-  const [discountEnabled,     setDiscountEnabled]     = useState(false);
-  const [discountType,        setDiscountType]        = useState<'percentage' | 'fixed'>('percentage');
-  const [discountValue,       setDiscountValue]       = useState<string>('0');
-  const [filters,             setFilters]             = useState({ transmission: 'All', fuel: 'All', type: 'All' });
+
+  // Night charge edit state — separate values for pickup and drop
+  const [pickupNightChargeValue, setPickupNightChargeValue] = useState<string>('0');
+  const [dropNightChargeValue,   setDropNightChargeValue]   = useState<string>('0');
+  const [editingPickupNight,     setEditingPickupNight]     = useState(false);
+  const [editingDropNight,       setEditingDropNight]       = useState(false);
+
+  const [discountEnabled, setDiscountEnabled] = useState(false);
+  const [discountType,    setDiscountType]    = useState<'percentage' | 'fixed'>('percentage');
+  const [discountValue,   setDiscountValue]   = useState<string>('0');
+  const [filters,         setFilters]         = useState({ transmission: 'All', fuel: 'All', type: 'All' });
 
   const [fleetData,    setFleetData]    = useState<Record<string, any[]>>({});
   const [fleetLoading, setFleetLoading] = useState(true);
@@ -82,14 +127,18 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   const [serviceLocations, setServiceLocations] = useState<{location_name: string; surcharge: number; night_surcharge: number}[]>([]);
 
-  // ── Day timing settings loaded from DB ────────────────────
+  // Day timing
   const [dayStartTime, setDayStartTime] = useState('09:00');
   const [halfDayHours, setHalfDayHours] = useState(6);
 
-  // ── Day breakdown toggle ──────────────────────────────────
+  // Night timing
+  const [nightFrom, setNightFrom] = useState('');
+  const [nightTo,   setNightTo]   = useState('');
+
+  // Day breakdown toggle
   const [showDayBreakdown, setShowDayBreakdown] = useState(false);
 
-  // ── Derived: billing days from date range ─────────────────
+  // ── Derived: billing days ─────────────────────────────────
   const billingDaysResult = useMemo(() => {
     if (!customerData.pickupDateTime || !customerData.returnDateTime) return null;
     return calculateBillingDays(
@@ -101,6 +150,25 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
   }, [customerData.pickupDateTime, customerData.returnDateTime, dayStartTime, halfDayHours]);
 
   const billingDays = billingDaysResult?.totalDays ?? 1;
+
+  // ── Per time-point night checks ────────────────────────────
+  // pickupIsNight: true only if pickup time falls in night window
+  // dropIsNight:   true only if drop time falls in night window
+  const pickupISO = customerData.pickupDateTime
+    ? new Date(customerData.pickupDateTime).toISOString() : '';
+  const dropISO = customerData.returnDateTime
+    ? new Date(customerData.returnDateTime).toISOString() : '';
+
+  const pickupIsNight = useMemo(() =>
+    isTimeInNightWindow(pickupISO, nightFrom, nightTo),
+  [pickupISO, nightFrom, nightTo]);
+
+  const dropIsNight = useMemo(() =>
+    isTimeInNightWindow(dropISO, nightFrom, nightTo),
+  [dropISO, nightFrom, nightTo]);
+
+  // Show night charges section if either pickup or drop is in night window
+  const hasNightOverlap = pickupIsNight || dropIsNight;
 
   // ── Auto deposit ──────────────────────────────────────────
   const autoDepositTotal = useMemo(() =>
@@ -115,12 +183,13 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   useEffect(() => {
     if (selectedVehicles.length === 0) {
+      setDepositEnabled(true);
       setDepositOverride(null);
       setEditingDeposit(false);
     }
   }, [selectedVehicles.length]);
 
-  // ── Load fleet from DB ────────────────────────────────────
+  // ── Load fleet + owner settings ───────────────────────────
   const loadFleet = async () => {
     setFleetLoading(true);
     const authUser = await getCurrentUser();
@@ -128,17 +197,17 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
     const { data: ownerRow } = await supabase
       .from('owners')
-      .select('id, day_start_time, half_day_hours')
+      .select('id, day_start_time, half_day_hours, night_timing_from, night_timing_to')
       .eq('user_id', authUser.id)
       .single();
     if (!ownerRow) { setFleetLoading(false); return; }
     setOwnerId(ownerRow.id);
 
-    // Load day timing settings from owner row
     if (ownerRow.day_start_time) setDayStartTime((ownerRow.day_start_time as string).slice(0, 5));
     if (ownerRow.half_day_hours != null) setHalfDayHours(Number(ownerRow.half_day_hours));
+    if (ownerRow.night_timing_from) setNightFrom((ownerRow.night_timing_from as string).slice(0, 5));
+    if (ownerRow.night_timing_to)   setNightTo((ownerRow.night_timing_to   as string).slice(0, 5));
 
-    // Load service locations
     const { data: locData } = await supabase
       .from('owner_service_locations')
       .select('location_name, surcharge, night_surcharge')
@@ -159,9 +228,10 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       }));
       setPickupChargeValue(String(locs[0].surcharge || 0));
       setDropChargeValue(String(locs[0].surcharge   || 0));
+      setPickupNightChargeValue(String(locs[0].night_surcharge || 0));
+      setDropNightChargeValue(String(locs[0].night_surcharge   || 0));
     }
 
-    // Load tariffs
     const today = new Date().toISOString().split('T')[0];
     const { data: tariffData } = await supabase
       .from('tariffs')
@@ -220,20 +290,22 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   useEffect(() => { loadFleet(); }, []);
 
-  // Sync charge values when location changes
+  // Sync day + night charge values when location changes
   useEffect(() => {
     if (serviceLocations.length === 0) return;
     const pickup = serviceLocations.find(l => l.location_name === customerData.pickupLocation);
     setPickupChargeValue(String(pickup?.surcharge ?? 0));
+    setPickupNightChargeValue(String(pickup?.night_surcharge ?? 0));
   }, [customerData.pickupLocation, serviceLocations]);
 
   useEffect(() => {
     if (serviceLocations.length === 0) return;
     const drop = serviceLocations.find(l => l.location_name === customerData.dropLocation);
     setDropChargeValue(String(drop?.surcharge ?? 0));
+    setDropNightChargeValue(String(drop?.night_surcharge ?? 0));
   }, [customerData.dropLocation, serviceLocations]);
 
-  // Availability check when dates change
+  // Availability check
   useEffect(() => {
     const fetchBookedIds = async () => {
       if (!customerData.pickupDateTime || !customerData.returnDateTime || !ownerId) {
@@ -328,19 +400,36 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     && customerData.fullName && customerData.phone
     && customerData.pickupDateTime && customerData.returnDateTime;
 
-  // ── Calculations — rate × billingDays ────────────────────
+  const pickupChargePerVehicle      = parseFloat(pickupChargeValue)      || 0;
+  const dropChargePerVehicle        = parseFloat(dropChargeValue)        || 0;
+  const pickupNightChargePerVehicle = parseFloat(pickupNightChargeValue) || 0;
+  const dropNightChargePerVehicle   = parseFloat(dropNightChargeValue)   || 0;
+
+  // ── Calculations ──────────────────────────────────────────
   const calculations = useMemo(() => {
-    // Subtotal = Σ (rate/day × billingDays × quantity)
     const subtotal = selectedVehicles.reduce(
       (acc, curr) => acc + curr.rate * billingDays * curr.quantity, 0
     );
 
-    // Location charges scale with total vehicle count
     const perVehicleCharge = (parseFloat(pickupChargeValue) || 0) + (parseFloat(dropChargeValue) || 0);
     const surcharge = locationCharges && selectedVehicles.length > 0
       ? perVehicleCharge * totalSelectedCount
       : 0;
 
+    // ── Night surcharge — only for the leg whose time is in the night window ──
+    // pickup night charge only if pickup time is in night window
+    // drop night charge only if drop time is in night window
+    const pickupNight = pickupIsNight
+      ? (parseFloat(pickupNightChargeValue) || 0) * totalSelectedCount
+      : 0;
+    const dropNight = dropIsNight
+      ? (parseFloat(dropNightChargeValue) || 0) * totalSelectedCount
+      : 0;
+    const nightSurcharge = selectedVehicles.length > 0
+      ? pickupNight + dropNight
+      : 0;
+
+    // Deposit always saved to DB regardless of depositEnabled (visibility only)
     const deposit = showDeposit ? (parseFloat(depositDisplayValue) || 0) : 0;
 
     const val = parseFloat(discountValue) || 0;
@@ -355,14 +444,16 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       }
     }
 
-    const taxableAmount = Math.max(0, subtotal + surcharge - discountAmount);
+    const taxableAmount = Math.max(0, subtotal + surcharge + nightSurcharge - discountAmount);
     const gst   = taxableAmount * 0.18;
     const total = taxableAmount + deposit + gst;
 
-    return { subtotal, surcharge, deposit, gst, total, discountAmount, error };
+    return { subtotal, surcharge, nightSurcharge, pickupNight, dropNight, deposit, gst, total, discountAmount, error };
   }, [
-    selectedVehicles, billingDays, totalSelectedCount, showDeposit, depositDisplayValue,
+    selectedVehicles, billingDays, totalSelectedCount,
+    showDeposit, depositDisplayValue,
     locationCharges, pickupChargeValue, dropChargeValue,
+    pickupIsNight, dropIsNight, pickupNightChargeValue, dropNightChargeValue,
     discountType, discountValue, discountEnabled,
   ]);
 
@@ -388,7 +479,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
           status:            'BOOKED',
           no_of_vehicles:    totalSelectedCount,
           subtotal:          calculations.subtotal,
-          surcharge:         calculations.surcharge,
+          surcharge:         calculations.surcharge + calculations.nightSurcharge,
           security_deposit:  calculations.deposit,
           discount_type:     discountEnabled ? discountType : null,
           discount_value:    discountEnabled ? parseFloat(discountValue) : 0,
@@ -437,8 +528,19 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     } finally { setIsSaving(false); }
   };
 
-  const pickupChargePerVehicle = parseFloat(pickupChargeValue) || 0;
-  const dropChargePerVehicle   = parseFloat(dropChargeValue)   || 0;
+  const nightWindowDisplay = useMemo(() => {
+    if (!nightFrom || !nightTo) return '';
+    const fmt = (t: string) =>
+      new Date('1970-01-01T' + t).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    return `${fmt(nightFrom)} – ${fmt(nightTo)}`;
+  }, [nightFrom, nightTo]);
+
+  const PencilIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+    </svg>
+  );
 
   return (
     <div className="max-w-7xl mx-auto pb-20">
@@ -451,7 +553,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8 items-start">
-        {/* ── Left Column ── */}
         <div className="flex-1 space-y-8 w-full">
 
           {/* Customer & Trip Details */}
@@ -534,40 +635,31 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
               </div>
             </div>
 
-            {/* ── Day Breakdown — visible when dates are set ── */}
+            {/* Day Breakdown */}
             {billingDaysResult && billingDaysResult.totalDays > 0 && (
               <div className="mt-6 pt-5 border-t border-[#d1d0eb]/30">
-                <button
-                  onClick={() => setShowDayBreakdown(v => !v)}
-                  className="flex items-center justify-between w-full group"
-                >
+                <button onClick={() => setShowDayBreakdown(v => !v)} className="flex items-center justify-between w-full group">
                   <div className="flex items-center space-x-2">
                     <div className="w-6 h-6 bg-[#EEEDFA] rounded-lg flex items-center justify-center shrink-0">
                       <Info size={12} className="text-[#6360DF]" />
                     </div>
                     <span className="text-sm font-bold text-[#151a3c]">
-                      Duration:{' '}
-                      <span className="text-[#6360DF]">{formatDays(billingDaysResult.totalDays)}</span>
+                      Duration: <span className="text-[#6360DF]">{formatDays(billingDaysResult.totalDays)}</span>
                     </span>
                     <span className="text-[11px] text-[#6c7e96] font-medium hidden sm:inline">
                       · day starts {new Date('1970-01-01T' + dayStartTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
                     </span>
+                    {hasNightOverlap && nightWindowDisplay && (
+                      <span className="flex items-center space-x-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        <Moon size={10} /><span>Night</span>
+                      </span>
+                    )}
                   </div>
-                  <ChevronRight
-                    size={14}
-                    className={`text-[#6c7e96] transition-transform shrink-0 ${showDayBreakdown ? 'rotate-90' : ''}`}
-                  />
+                  <ChevronRight size={14} className={`text-[#6c7e96] transition-transform shrink-0 ${showDayBreakdown ? 'rotate-90' : ''}`} />
                 </button>
-
                 <AnimatePresence>
                   {showDayBreakdown && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="overflow-hidden mt-3"
-                    >
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden mt-3">
                       <div className="bg-[#F8F9FF] rounded-2xl border border-[#d1d0eb]/40 overflow-hidden">
                         {billingDaysResult.breakdown.map((seg, idx) => (
                           <div key={idx} className="flex items-center justify-between px-4 py-3 border-b border-[#d1d0eb]/20 last:border-0">
@@ -575,23 +667,17 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                               <div className={`w-2 h-2 rounded-full shrink-0 ${seg.type === 'half' ? 'bg-amber-400' : 'bg-[#6360DF]'}`} />
                               <div className="min-w-0">
                                 <span className="text-xs font-extrabold text-[#151a3c]">{seg.label}</span>
-                                <span className="text-[10px] text-[#6c7e96] font-medium ml-2 truncate">
-                                  {seg.from} → {seg.to}
-                                </span>
+                                <span className="text-[10px] text-[#6c7e96] font-medium ml-2 truncate">{seg.from} → {seg.to}</span>
                               </div>
                             </div>
-                            <span className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full shrink-0 ml-2 ${
-                              seg.type === 'half' ? 'bg-amber-50 text-amber-600' : 'bg-[#EEEDFA] text-[#6360DF]'
-                            }`}>
+                            <span className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full shrink-0 ml-2 ${seg.type === 'half' ? 'bg-amber-50 text-amber-600' : 'bg-[#EEEDFA] text-[#6360DF]'}`}>
                               {seg.charge === 0.5 ? '½ day' : '1 day'}
                             </span>
                           </div>
                         ))}
                         <div className="flex items-center justify-between px-4 py-3 bg-[#EEEDFA]/60">
                           <span className="text-[11px] font-extrabold text-[#151a3c] uppercase tracking-wider">Total</span>
-                          <span className="text-[13px] font-extrabold text-[#6360DF]">
-                            {formatDays(billingDaysResult.totalDays)}
-                          </span>
+                          <span className="text-[13px] font-extrabold text-[#6360DF]">{formatDays(billingDaysResult.totalDays)}</span>
                         </div>
                       </div>
                     </motion.div>
@@ -614,9 +700,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                     </p>
                   )}
                   {!availabilityLoading && customerData.pickupDateTime && customerData.returnDateTime && (
-                    <p className="text-[11px] text-[#10B981] font-medium mt-0.5">
-                      Showing availability for selected dates
-                    </p>
+                    <p className="text-[11px] text-[#10B981] font-medium mt-0.5">Showing availability for selected dates</p>
                   )}
                 </div>
               </div>
@@ -637,7 +721,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                 ))}
               </div>
             </div>
-
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
@@ -675,7 +758,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                           const datesSet   = !!(customerData.pickupDateTime && customerData.returnDateTime);
                           const availCount = datesSet ? v.availableCount : v.totalCount;
                           const isLow      = availCount <= 2 && availCount > 0;
-
                           return (
                             <tr key={v.id} className="border-b border-[#d1d0eb]/10 last:border-0 hover:bg-[#F8F9FA] transition-colors">
                               <td className="py-4 font-bold text-[#151a3c] text-sm">{v.name}</td>
@@ -686,14 +768,11 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                                   {datesSet ? `${availCount}/${v.totalCount}` : `${v.totalCount}/${v.totalCount}`}
                                 </span>
                                 {datesSet && availCount < v.totalCount && (
-                                  <span className="block text-[9px] text-[#F59E0B] font-bold mt-0.5">
-                                    {v.totalCount - availCount} booked
-                                  </span>
+                                  <span className="block text-[9px] text-[#F59E0B] font-bold mt-0.5">{v.totalCount - availCount} booked</span>
                                 )}
                               </td>
                               <td className="py-4">
                                 <span className="font-extrabold text-[#151a3c] text-sm">₹{v.rate.toLocaleString()}</span>
-                                {/* Show total for this vehicle once dates are set */}
                                 {billingDaysResult && billingDaysResult.totalDays > 0 && (
                                   <span className="text-[10px] text-[#6c7e96] font-medium block mt-0.5">
                                     × {formatDays(billingDaysResult.totalDays)} = ₹{Math.round(v.rate * billingDays).toLocaleString()}
@@ -727,7 +806,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
           </section>
         </div>
 
-        {/* ── Right Column: Booking Summary ── */}
+        {/* Booking Summary */}
         <div className="w-full lg:w-[380px] lg:sticky lg:top-8">
           <div className="bg-white rounded-[2rem] shadow-xl overflow-hidden flex flex-col border border-[#d1d0eb]/30">
             <div className="bg-[#6360DF] p-6 text-white">
@@ -739,9 +818,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
               <div className="space-y-4">
                 <p className="text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase">Customer Information</p>
                 <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-full bg-[#EEEDFA] flex items-center justify-center text-[#6360DF]">
-                    <User size={18} />
-                  </div>
+                  <div className="w-10 h-10 rounded-full bg-[#EEEDFA] flex items-center justify-center text-[#6360DF]"><User size={18} /></div>
                   <div>
                     <h4 className="font-extrabold text-[#151a3c] text-sm">{customerData.fullName || '—'}</h4>
                     <p className="text-xs font-semibold text-[#6c7e96]">{customerData.phone || '—'}</p>
@@ -765,7 +842,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
               <div className="h-px bg-[#d1d0eb]/30" />
 
-              {/* Selected fleet preview */}
+              {/* Selected fleet */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <p className="text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase">Selected Fleet</p>
@@ -810,7 +887,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                   <span className="font-extrabold text-[#151a3c]">₹{calculations.subtotal.toLocaleString()}.00</span>
                 </div>
 
-                {/* Location Charges */}
+                {/* Location Charges + Night Charges nested inside */}
                 <div className="space-y-2">
                   <div className="flex items-center space-x-2">
                     <input type="checkbox" checked={locationCharges}
@@ -819,12 +896,15 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                     <span className="text-sm font-semibold text-[#6c7e96]">Location Charges</span>
                     {locationCharges && (
                       <span className="ml-auto text-sm font-extrabold text-[#151a3c]">
-                        ₹{calculations.surcharge.toLocaleString()}.00
+                        ₹{(calculations.surcharge + calculations.nightSurcharge).toLocaleString()}.00
                       </span>
                     )}
                   </div>
+
                   {locationCharges && (
                     <div className="pl-6 space-y-1.5">
+
+                      {/* Pickup day charge */}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-[#6c7e96] font-medium">
                           ↑ Pickup · {customerData.pickupLocation || '—'}
@@ -840,13 +920,13 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                           ) : (
                             <>
                               <span className="font-bold text-[#151a3c]">₹{(pickupChargePerVehicle * totalSelectedCount).toLocaleString()}.00</span>
-                              <button onClick={() => setEditingPickupCharge(true)} className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                              </button>
+                              <button onClick={() => setEditingPickupCharge(true)} className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all"><PencilIcon /></button>
                             </>
                           )}
                         </div>
                       </div>
+
+                      {/* Drop day charge */}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-[#6c7e96] font-medium">
                           ↓ Drop · {customerData.dropLocation || '—'}
@@ -862,13 +942,79 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                           ) : (
                             <>
                               <span className="font-bold text-[#151a3c]">₹{(dropChargePerVehicle * totalSelectedCount).toLocaleString()}.00</span>
-                              <button onClick={() => setEditingDropCharge(true)} className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                              </button>
+                              <button onClick={() => setEditingDropCharge(true)} className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all"><PencilIcon /></button>
                             </>
                           )}
                         </div>
                       </div>
+
+                      {/* Night Charges — nested, only shows relevant legs */}
+                      <AnimatePresence>
+                        {hasNightOverlap && selectedVehicles.length > 0 && nightWindowDisplay && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="flex items-center space-x-1.5 mt-2 mb-1.5">
+                              <Moon size={11} className="text-indigo-500 shrink-0" />
+                              <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">Night Charges</span>
+                              <span className="text-[9px] text-indigo-400 font-medium bg-indigo-50 px-1.5 py-0.5 rounded-full">{nightWindowDisplay}</span>
+                            </div>
+
+                            {/* Pickup night — only shown if pickup time is in night window */}
+                            {pickupIsNight && (
+                              <div className="flex items-center justify-between text-xs mb-1">
+                                <span className="text-[#6c7e96] font-medium">
+                                  ↑ Pickup night · {customerData.pickupLocation || '—'}
+                                  {totalSelectedCount > 1 && <span className="text-indigo-500 font-bold ml-1">×{totalSelectedCount}</span>}
+                                </span>
+                                <div className="flex items-center space-x-1.5">
+                                  {editingPickupNight ? (
+                                    <input autoFocus type="number" min="0" value={pickupNightChargeValue}
+                                      onChange={e => setPickupNightChargeValue(e.target.value)}
+                                      onBlur={() => setEditingPickupNight(false)}
+                                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingPickupNight(false); }}
+                                      className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-indigo-400 rounded-lg py-0.5 px-2 text-xs outline-none" />
+                                  ) : (
+                                    <>
+                                      <span className="font-bold text-[#151a3c]">₹{(pickupNightChargePerVehicle * totalSelectedCount).toLocaleString()}.00</span>
+                                      <button onClick={() => setEditingPickupNight(true)} className="p-0.5 text-[#6c7e96] hover:text-indigo-500 hover:bg-indigo-50 rounded transition-all"><PencilIcon /></button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Drop night — only shown if drop time is in night window */}
+                            {dropIsNight && (
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-[#6c7e96] font-medium">
+                                  ↓ Drop night · {customerData.dropLocation || '—'}
+                                  {totalSelectedCount > 1 && <span className="text-indigo-500 font-bold ml-1">×{totalSelectedCount}</span>}
+                                </span>
+                                <div className="flex items-center space-x-1.5">
+                                  {editingDropNight ? (
+                                    <input autoFocus type="number" min="0" value={dropNightChargeValue}
+                                      onChange={e => setDropNightChargeValue(e.target.value)}
+                                      onBlur={() => setEditingDropNight(false)}
+                                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDropNight(false); }}
+                                      className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-indigo-400 rounded-lg py-0.5 px-2 text-xs outline-none" />
+                                  ) : (
+                                    <>
+                                      <span className="font-bold text-[#151a3c]">₹{(dropNightChargePerVehicle * totalSelectedCount).toLocaleString()}.00</span>
+                                      <button onClick={() => setEditingDropNight(true)} className="p-0.5 text-[#6c7e96] hover:text-indigo-500 hover:bg-indigo-50 rounded transition-all"><PencilIcon /></button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
                     </div>
                   )}
                 </div>
@@ -879,30 +1025,44 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
                       <div className="flex items-center justify-between text-sm pt-0.5">
                         <div className="flex items-center space-x-2">
-                          <input type="checkbox" checked readOnly className="w-4 h-4 rounded text-[#6360DF] focus:ring-[#6360DF] cursor-default" />
+                          <input
+                            type="checkbox"
+                            checked={depositEnabled}
+                            onChange={e => {
+                              setDepositEnabled(e.target.checked);
+                              if (e.target.checked) setDepositOverride(null);
+                              setEditingDeposit(false);
+                            }}
+                            className="w-4 h-4 rounded text-[#6360DF] focus:ring-[#6360DF] cursor-pointer"
+                          />
                           <span className="font-semibold text-[#6c7e96]">Security Deposit</span>
                         </div>
-                        <div className="flex items-center space-x-1.5">
-                          {editingDeposit ? (
-                            <input autoFocus type="number" min="0" value={depositDisplayValue}
-                              onChange={e => setDepositOverride(e.target.value)}
-                              onBlur={() => setEditingDeposit(false)}
-                              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDeposit(false); }}
-                              className="w-20 text-right font-extrabold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-sm outline-none" />
-                          ) : (
-                            <>
-                              <span className="font-extrabold text-[#151a3c]">₹{(parseFloat(depositDisplayValue) || 0).toLocaleString()}.00</span>
-                              <button onClick={() => setEditingDeposit(true)} className="p-1 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded-lg transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                              </button>
-                              {depositOverride !== null && (
-                                <button onClick={() => setDepositOverride(null)} title="Reset to tariff default" className="text-[9px] font-bold text-[#6360DF] hover:underline ml-1">reset</button>
-                              )}
-                            </>
-                          )}
-                        </div>
+                        {depositEnabled && (
+                          <div className="flex items-center space-x-1.5">
+                            {editingDeposit ? (
+                              <input autoFocus type="number" min="0" value={depositDisplayValue}
+                                onChange={e => setDepositOverride(e.target.value)}
+                                onBlur={() => setEditingDeposit(false)}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDeposit(false); }}
+                                className="w-20 text-right font-extrabold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-sm outline-none" />
+                            ) : (
+                              <>
+                                <span className="font-extrabold text-[#151a3c]">₹{(parseFloat(depositDisplayValue) || 0).toLocaleString()}.00</span>
+                                <button onClick={() => setEditingDeposit(true)} className="p-1 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded-lg transition-all">
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                  </svg>
+                                </button>
+                                {depositOverride !== null && (
+                                  <button onClick={() => setDepositOverride(null)} title="Reset to tariff default" className="text-[9px] font-bold text-[#6360DF] hover:underline ml-1">reset</button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      {selectedVehicles.length > 1 && depositOverride === null && (
+                      {depositEnabled && selectedVehicles.length > 1 && depositOverride === null && (
                         <div className="pl-6 mt-1.5 space-y-1">
                           {selectedVehicles.map(sv => (
                             <div key={sv.id} className="flex items-center justify-between text-xs">
