@@ -11,12 +11,15 @@ import {
   ChevronDown,
   AlertCircle,
   Ban,
-  Loader2
+  Loader2,
+  Info,
+  ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { supabase, getCurrentUser } from '../supabaseClient';
 import { resolveActiveTariff } from './FleetListing';
+import { calculateBillingDays, formatDays } from '../src/utils/dayCalculator';
 
 interface SelectedVehicle {
   id: string;
@@ -24,8 +27,8 @@ interface SelectedVehicle {
   name: string;
   transmission: string;
   fuel: string;
-  rate: number;
-  deposit: number;      // ← per-model deposit from tariff
+  rate: number;       // rate per day
+  deposit: number;    // per-model deposit from tariff
   quantity: number;
   availableCount: number;
 }
@@ -56,48 +59,60 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
   const [selectedVehicles, setSelectedVehicles] = useState<SelectedVehicle[]>([]);
 
   // Security deposit — hidden until at least one vehicle is selected
-  // depositOverride: null = use auto (sum from tariff), string = user has manually edited
   const [depositOverride,   setDepositOverride]   = useState<string | null>(null);
   const [editingDeposit,    setEditingDeposit]     = useState(false);
 
-  const [locationCharges,    setLocationCharges]    = useState(true);
-  const [pickupChargeValue,  setPickupChargeValue]  = useState<string>('0');
-  const [dropChargeValue,    setDropChargeValue]    = useState<string>('0');
+  const [locationCharges,     setLocationCharges]     = useState(true);
+  const [pickupChargeValue,   setPickupChargeValue]   = useState<string>('0');
+  const [dropChargeValue,     setDropChargeValue]     = useState<string>('0');
   const [editingPickupCharge, setEditingPickupCharge] = useState(false);
   const [editingDropCharge,   setEditingDropCharge]   = useState(false);
-  const [discountEnabled,    setDiscountEnabled]    = useState(false);
-  const [discountType,       setDiscountType]       = useState<'percentage' | 'fixed'>('percentage');
-  const [discountValue,      setDiscountValue]      = useState<string>('0');
-  const [filters,            setFilters]            = useState({ transmission: 'All', fuel: 'All', type: 'All' });
+  const [discountEnabled,     setDiscountEnabled]     = useState(false);
+  const [discountType,        setDiscountType]        = useState<'percentage' | 'fixed'>('percentage');
+  const [discountValue,       setDiscountValue]       = useState<string>('0');
+  const [filters,             setFilters]             = useState({ transmission: 'All', fuel: 'All', type: 'All' });
 
-  // Raw fleet from DB
   const [fleetData,    setFleetData]    = useState<Record<string, any[]>>({});
   const [fleetLoading, setFleetLoading] = useState(true);
   const [isSaving,     setIsSaving]     = useState(false);
   const [ownerId,      setOwnerId]      = useState<string | null>(null);
 
-  // Set of vehicle IDs that are booked in the selected date range
   const [bookedVehicleIds,    setBookedVehicleIds]    = useState<Set<string>>(new Set());
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
 
-  // Service locations
   const [serviceLocations, setServiceLocations] = useState<{location_name: string; surcharge: number; night_surcharge: number}[]>([]);
 
-  // ── Derived: auto deposit = sum of (model deposit × quantity) ──
-  // This is recalculated whenever selectedVehicles changes
+  // ── Day timing settings loaded from DB ────────────────────
+  const [dayStartTime, setDayStartTime] = useState('09:00');
+  const [halfDayHours, setHalfDayHours] = useState(6);
+
+  // ── Day breakdown toggle ──────────────────────────────────
+  const [showDayBreakdown, setShowDayBreakdown] = useState(false);
+
+  // ── Derived: billing days from date range ─────────────────
+  const billingDaysResult = useMemo(() => {
+    if (!customerData.pickupDateTime || !customerData.returnDateTime) return null;
+    return calculateBillingDays(
+      new Date(customerData.pickupDateTime).toISOString(),
+      new Date(customerData.returnDateTime).toISOString(),
+      dayStartTime,
+      halfDayHours,
+    );
+  }, [customerData.pickupDateTime, customerData.returnDateTime, dayStartTime, halfDayHours]);
+
+  const billingDays = billingDaysResult?.totalDays ?? 1;
+
+  // ── Auto deposit ──────────────────────────────────────────
   const autoDepositTotal = useMemo(() =>
     selectedVehicles.reduce((acc, sv) => acc + sv.deposit * sv.quantity, 0),
   [selectedVehicles]);
 
-  // Deposit is visible only when at least one vehicle is selected
   const showDeposit = selectedVehicles.length > 0;
 
-  // The displayed deposit value: override if user edited, else auto
   const depositDisplayValue = depositOverride !== null
     ? depositOverride
     : String(autoDepositTotal);
 
-  // Reset deposit override when all vehicles are removed
   useEffect(() => {
     if (selectedVehicles.length === 0) {
       setDepositOverride(null);
@@ -105,16 +120,23 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     }
   }, [selectedVehicles.length]);
 
-  // ── Load fleet from DB ─────────────────────────────────────
+  // ── Load fleet from DB ────────────────────────────────────
   const loadFleet = async () => {
     setFleetLoading(true);
     const authUser = await getCurrentUser();
     if (!authUser) { setFleetLoading(false); return; }
 
     const { data: ownerRow } = await supabase
-      .from('owners').select('id').eq('user_id', authUser.id).single();
+      .from('owners')
+      .select('id, day_start_time, half_day_hours')
+      .eq('user_id', authUser.id)
+      .single();
     if (!ownerRow) { setFleetLoading(false); return; }
     setOwnerId(ownerRow.id);
+
+    // Load day timing settings from owner row
+    if (ownerRow.day_start_time) setDayStartTime((ownerRow.day_start_time as string).slice(0, 5));
+    if (ownerRow.half_day_hours != null) setHalfDayHours(Number(ownerRow.half_day_hours));
 
     // Load service locations
     const { data: locData } = await supabase
@@ -129,7 +151,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     }));
     setServiceLocations(locs);
 
-    // Auto-select first location + seed location charges value
     if (locs.length > 0) {
       setCustomerData(prev => ({
         ...prev,
@@ -140,7 +161,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       setDropChargeValue(String(locs[0].surcharge   || 0));
     }
 
-    // Load tariffs — use same priority resolution as Fleet Listing
+    // Load tariffs
     const today = new Date().toISOString().split('T')[0];
     const { data: tariffData } = await supabase
       .from('tariffs')
@@ -148,7 +169,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       .eq('owner_id', ownerRow.id);
     const allTariffs: any[] = (tariffData as any[]) || [];
 
-    // Build rate map AND deposit map per model
     const tariffMap:  Record<string, number> = {};
     const depositMap: Record<string, number> = {};
     const uniqueModelIds = [...new Set(allTariffs.map((t: any) => t.model_id as string))];
@@ -158,12 +178,11 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       if (resolved.deposit !== null) depositMap[modelId] = resolved.deposit;
     });
 
-    // Load all non-maintenance vehicles
     const { data, error } = await supabase
       .from('vehicles')
       .select('id, status, transmission, fuel_type, models(id, brand, name, default_transmission, default_fuel_type, base_rate_per_day, categories(name))')
       .eq('owner_id', ownerRow.id)
-      .in('status', ['available', 'rented']); // include rented — date check will handle them
+      .in('status', ['available', 'rented']);
 
     if (error) { toast.error('Failed to load fleet.'); setFleetLoading(false); return; }
 
@@ -175,14 +194,11 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         const rate    = tariffMap[model.id]  ?? model.base_rate_per_day ?? 1500;
         const deposit = depositMap[model.id] ?? 0;
         modelMap[model.id] = {
-          id:       model.id,
-          name:     `${model.brand} ${model.name}`,
-          trans:    v.transmission || model.default_transmission,
-          fuel:     v.fuel_type    || model.default_fuel_type,
+          id: model.id, name: `${model.brand} ${model.name}`,
+          trans: v.transmission || model.default_transmission,
+          fuel:  v.fuel_type    || model.default_fuel_type,
           category: model.categories?.name?.toUpperCase() || 'OTHERS',
-          rate,
-          deposit,   // ← stored per model
-          vehicles:  [],
+          rate, deposit, vehicles: [],
         };
       }
       modelMap[model.id].vehicles.push(v.id);
@@ -192,14 +208,9 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     Object.values(modelMap).forEach((m: any) => {
       if (!grouped[m.category]) grouped[m.category] = [];
       grouped[m.category].push({
-        id:         m.id,
-        name:       m.name,
-        trans:      m.trans,
-        fuel:       m.fuel,
-        totalCount: m.vehicles.length,
-        vehicleIds: m.vehicles,
-        rate:       m.rate,
-        deposit:    m.deposit,   // ← passed through to fleet table
+        id: m.id, name: m.name, trans: m.trans, fuel: m.fuel,
+        totalCount: m.vehicles.length, vehicleIds: m.vehicles,
+        rate: m.rate, deposit: m.deposit,
       });
     });
 
@@ -209,7 +220,7 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   useEffect(() => { loadFleet(); }, []);
 
-  // ── Sync charge values when pickup/drop location changes ────
+  // Sync charge values when location changes
   useEffect(() => {
     if (serviceLocations.length === 0) return;
     const pickup = serviceLocations.find(l => l.location_name === customerData.pickupLocation);
@@ -222,19 +233,16 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     setDropChargeValue(String(drop?.surcharge ?? 0));
   }, [customerData.dropLocation, serviceLocations]);
 
-  // ── Re-check availability when dates change ────────────────
+  // Availability check when dates change
   useEffect(() => {
     const fetchBookedIds = async () => {
       if (!customerData.pickupDateTime || !customerData.returnDateTime || !ownerId) {
-        setBookedVehicleIds(new Set());
-        return;
+        setBookedVehicleIds(new Set()); return;
       }
       setAvailabilityLoading(true);
       try {
         const pickupISO = new Date(customerData.pickupDateTime).toISOString();
         const returnISO = new Date(customerData.returnDateTime).toISOString();
-
-        // Overlap condition: booking.pickup_at < our returnISO AND booking.drop_at > our pickupISO
         const { data } = await supabase
           .from('booking_details')
           .select('vehicle_id, bookings!inner(pickup_at, drop_at, status, owner_id)')
@@ -242,39 +250,28 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
           .in('bookings.status', ['BOOKED', 'ONGOING'])
           .lt('bookings.pickup_at', returnISO)
           .gt('bookings.drop_at', pickupISO);
-
         const ids = new Set<string>(
           ((data as any[]) || []).map((d: any) => d.vehicle_id).filter(Boolean)
         );
         setBookedVehicleIds(ids);
-      } finally {
-        setAvailabilityLoading(false);
-      }
+      } finally { setAvailabilityLoading(false); }
     };
     fetchBookedIds();
   }, [customerData.pickupDateTime, customerData.returnDateTime, ownerId]);
 
-  // ── Fleet with real-time availability applied ──────────────
   const fleetWithAvailability = useMemo(() => {
     const result: Record<string, any[]> = {};
     Object.entries(fleetData).forEach(([category, models]) => {
-      const enriched = models.map(m => {
+      result[category] = models.map(m => {
         const freeIds        = m.vehicleIds.filter((vid: string) => !bookedVehicleIds.has(vid));
         const availableCount = freeIds.length;
-        return {
-          ...m,
-          availableCount,
-          freeVehicleIds: freeIds,
-          available:      `${availableCount}/${m.totalCount}`,
-          fullyBooked:    availableCount === 0,
-        };
+        return { ...m, availableCount, freeVehicleIds: freeIds,
+          available: `${availableCount}/${m.totalCount}`, fullyBooked: availableCount === 0 };
       });
-      result[category] = enriched;
     });
     return result;
   }, [fleetData, bookedVehicleIds]);
 
-  // ── Apply filters + hide fully booked models ───────────────
   const filteredFleet = useMemo(() => {
     const result: Record<string, any[]> = {};
     Object.entries(fleetWithAvailability).forEach(([category, vehicles]) => {
@@ -282,7 +279,6 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         const transMatch     = filters.transmission === 'All' || v.trans === filters.transmission;
         const fuelMatch      = filters.fuel          === 'All' || v.fuel  === filters.fuel;
         const typeMatch      = filters.type          === 'All' || category.includes(filters.type.toUpperCase());
-        // Only hide fully-booked models when dates are set
         const availableMatch = !customerData.pickupDateTime || !customerData.returnDateTime || !v.fullyBooked;
         return transMatch && fuelMatch && typeMatch && availableMatch;
       });
@@ -293,35 +289,25 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   const handleVehicleAction = (v: any, action: 'add' | 'inc' | 'dec') => {
     setSelectedVehicles(prev => {
-      const existing = prev.find(item => item.id === v.id);
       if (action === 'add') {
         return [...prev, {
-          id:             v.id,
-          vehicleId:      v.freeVehicleIds?.[0] ?? v.vehicleIds[0],
-          name:           v.name,
-          transmission:   v.trans,
-          fuel:           v.fuel,
-          rate:           v.rate,
-          deposit:        v.deposit ?? 0,   // ← from tariff
-          quantity:       1,
-          availableCount: v.availableCount ?? v.totalCount,
+          id: v.id, vehicleId: v.freeVehicleIds?.[0] ?? v.vehicleIds[0],
+          name: v.name, transmission: v.trans, fuel: v.fuel,
+          rate: v.rate, deposit: v.deposit ?? 0,
+          quantity: 1, availableCount: v.availableCount ?? v.totalCount,
         }];
       }
-      if (action === 'inc') {
-        return prev.map(item =>
-          item.id === v.id && item.quantity < item.availableCount
-            ? { ...item, quantity: item.quantity + 1 } : item
-        );
-      }
-      if (action === 'dec') {
-        return prev.map(item => item.id === v.id ? { ...item, quantity: item.quantity - 1 } : item)
-                   .filter(item => item.quantity > 0);
-      }
+      if (action === 'inc') return prev.map(item =>
+        item.id === v.id && item.quantity < item.availableCount
+          ? { ...item, quantity: item.quantity + 1 } : item
+      );
+      if (action === 'dec') return prev.map(item =>
+        item.id === v.id ? { ...item, quantity: item.quantity - 1 } : item
+      ).filter(item => item.quantity > 0);
       return prev;
     });
   };
 
-  // Drop selected vehicles that become unavailable when dates change
   useEffect(() => {
     if (bookedVehicleIds.size === 0) return;
     setSelectedVehicles(prev =>
@@ -342,25 +328,21 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
     && customerData.fullName && customerData.phone
     && customerData.pickupDateTime && customerData.returnDateTime;
 
-  // ── Calculations ───────────────────────────────────────────
+  // ── Calculations — rate × billingDays ────────────────────
   const calculations = useMemo(() => {
-    const subtotal = selectedVehicles.reduce((acc, curr) => acc + (curr.rate * curr.quantity), 0);
+    // Subtotal = Σ (rate/day × billingDays × quantity)
+    const subtotal = selectedVehicles.reduce(
+      (acc, curr) => acc + curr.rate * billingDays * curr.quantity, 0
+    );
 
-    // ── CHANGED: Location charges scale with total vehicle count ──
-    // Each vehicle incurs the same pickup + drop surcharge.
-    // e.g. 3 vehicles × (₹100 pickup + ₹100 drop) = ₹600 total surcharge
+    // Location charges scale with total vehicle count
     const perVehicleCharge = (parseFloat(pickupChargeValue) || 0) + (parseFloat(dropChargeValue) || 0);
     const surcharge = locationCharges && selectedVehicles.length > 0
       ? perVehicleCharge * totalSelectedCount
       : 0;
 
-    // Security deposit — use override if user edited, else auto-sum from tariffs
-    // Only included when at least one vehicle is selected
-    const deposit = showDeposit
-      ? (parseFloat(depositDisplayValue) || 0)
-      : 0;
+    const deposit = showDeposit ? (parseFloat(depositDisplayValue) || 0) : 0;
 
-    // Discount
     const val = parseFloat(discountValue) || 0;
     let discountAmount = 0, error = '';
     if (discountEnabled) {
@@ -373,19 +355,18 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
       }
     }
 
-    // GST applies on (subtotal + surcharge - discount), NOT on deposit
     const taxableAmount = Math.max(0, subtotal + surcharge - discountAmount);
     const gst   = taxableAmount * 0.18;
     const total = taxableAmount + deposit + gst;
 
     return { subtotal, surcharge, deposit, gst, total, discountAmount, error };
   }, [
-    selectedVehicles, totalSelectedCount, showDeposit, depositDisplayValue,
+    selectedVehicles, billingDays, totalSelectedCount, showDeposit, depositDisplayValue,
     locationCharges, pickupChargeValue, dropChargeValue,
     discountType, discountValue, discountEnabled,
   ]);
 
-  // ── Save booking ───────────────────────────────────────────
+  // ── Save booking ──────────────────────────────────────────
   const handleConfirm = async () => {
     if (!isConfirmEnabled || !ownerId) return;
     setIsSaving(true);
@@ -422,11 +403,9 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
         .single();
 
       if (bookingErr || !bookingRow) {
-        toast.error('Failed to save booking: ' + bookingErr?.message);
-        return;
+        toast.error('Failed to save booking: ' + bookingErr?.message); return;
       }
 
-      // Insert booking_details — assign free vehicle IDs in order
       const detailRows: any[] = [];
       for (const sv of selectedVehicles) {
         const modelEntry = Object.values(fleetWithAvailability).flat().find((m: any) => m.id === sv.id) as any;
@@ -439,10 +418,10 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
             model_id:        sv.id,
             quantity:        1,
             daily_rate:      sv.rate,
-            line_subtotal:   sv.rate,
+            line_subtotal:   Math.round(sv.rate * billingDays),
             discount_amount: 0,
             tax_amount:      0,
-            total_amount:    sv.rate,
+            total_amount:    Math.round(sv.rate * billingDays),
           });
         }
       }
@@ -452,16 +431,12 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
       toast.success('Booking confirmed!');
       onConfirm(bookingRow);
-
     } catch (err) {
       console.error('Unexpected error saving booking:', err);
       toast.error('Something went wrong. Please try again.');
-    } finally {
-      setIsSaving(false);
-    }
+    } finally { setIsSaving(false); }
   };
 
-  // ── Convenience: per-vehicle charge amounts (for display) ──
   const pickupChargePerVehicle = parseFloat(pickupChargeValue) || 0;
   const dropChargePerVehicle   = parseFloat(dropChargeValue)   || 0;
 
@@ -558,6 +533,72 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                 </div>
               </div>
             </div>
+
+            {/* ── Day Breakdown — visible when dates are set ── */}
+            {billingDaysResult && billingDaysResult.totalDays > 0 && (
+              <div className="mt-6 pt-5 border-t border-[#d1d0eb]/30">
+                <button
+                  onClick={() => setShowDayBreakdown(v => !v)}
+                  className="flex items-center justify-between w-full group"
+                >
+                  <div className="flex items-center space-x-2">
+                    <div className="w-6 h-6 bg-[#EEEDFA] rounded-lg flex items-center justify-center shrink-0">
+                      <Info size={12} className="text-[#6360DF]" />
+                    </div>
+                    <span className="text-sm font-bold text-[#151a3c]">
+                      Duration:{' '}
+                      <span className="text-[#6360DF]">{formatDays(billingDaysResult.totalDays)}</span>
+                    </span>
+                    <span className="text-[11px] text-[#6c7e96] font-medium hidden sm:inline">
+                      · day starts {new Date('1970-01-01T' + dayStartTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                    </span>
+                  </div>
+                  <ChevronRight
+                    size={14}
+                    className={`text-[#6c7e96] transition-transform shrink-0 ${showDayBreakdown ? 'rotate-90' : ''}`}
+                  />
+                </button>
+
+                <AnimatePresence>
+                  {showDayBreakdown && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden mt-3"
+                    >
+                      <div className="bg-[#F8F9FF] rounded-2xl border border-[#d1d0eb]/40 overflow-hidden">
+                        {billingDaysResult.breakdown.map((seg, idx) => (
+                          <div key={idx} className="flex items-center justify-between px-4 py-3 border-b border-[#d1d0eb]/20 last:border-0">
+                            <div className="flex items-center space-x-3 min-w-0">
+                              <div className={`w-2 h-2 rounded-full shrink-0 ${seg.type === 'half' ? 'bg-amber-400' : 'bg-[#6360DF]'}`} />
+                              <div className="min-w-0">
+                                <span className="text-xs font-extrabold text-[#151a3c]">{seg.label}</span>
+                                <span className="text-[10px] text-[#6c7e96] font-medium ml-2 truncate">
+                                  {seg.from} → {seg.to}
+                                </span>
+                              </div>
+                            </div>
+                            <span className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full shrink-0 ml-2 ${
+                              seg.type === 'half' ? 'bg-amber-50 text-amber-600' : 'bg-[#EEEDFA] text-[#6360DF]'
+                            }`}>
+                              {seg.charge === 0.5 ? '½ day' : '1 day'}
+                            </span>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between px-4 py-3 bg-[#EEEDFA]/60">
+                          <span className="text-[11px] font-extrabold text-[#151a3c] uppercase tracking-wider">Total</span>
+                          <span className="text-[13px] font-extrabold text-[#6360DF]">
+                            {formatDays(billingDaysResult.totalDays)}
+                          </span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
           </section>
 
           {/* Select Fleet */}
@@ -650,7 +691,15 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                                   </span>
                                 )}
                               </td>
-                              <td className="py-4 font-extrabold text-[#151a3c] text-sm">₹{v.rate.toLocaleString()}</td>
+                              <td className="py-4">
+                                <span className="font-extrabold text-[#151a3c] text-sm">₹{v.rate.toLocaleString()}</span>
+                                {/* Show total for this vehicle once dates are set */}
+                                {billingDaysResult && billingDaysResult.totalDays > 0 && (
+                                  <span className="text-[10px] text-[#6c7e96] font-medium block mt-0.5">
+                                    × {formatDays(billingDaysResult.totalDays)} = ₹{Math.round(v.rate * billingDays).toLocaleString()}
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-4 text-right pr-4">
                                 {selected ? (
                                   <div className="inline-flex items-center space-x-3 bg-white border border-[#6360DF] rounded-lg px-2 py-1">
@@ -731,10 +780,17 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                         <div>
                           <h5 className="font-bold text-[#151a3c] text-sm">{v.name}</h5>
                           <p className="text-[10px] font-semibold text-[#6c7e96]">{v.transmission}</p>
+                          {billingDaysResult && (
+                            <p className="text-[10px] font-medium text-[#6c7e96]">
+                              ₹{v.rate.toLocaleString()} × {formatDays(billingDaysResult.totalDays)}
+                            </p>
+                          )}
                         </div>
                         <div className="text-right">
                           <p className="text-xs font-bold text-[#151a3c]">x{v.quantity}</p>
-                          <p className="text-sm font-extrabold text-[#151a3c]">₹{(v.rate * v.quantity).toLocaleString()}.00</p>
+                          <p className="text-sm font-extrabold text-[#151a3c]">
+                            ₹{Math.round(v.rate * billingDays * v.quantity).toLocaleString()}.00
+                          </p>
                         </div>
                       </div>
                     ))}
@@ -749,13 +805,12 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
               {/* Price breakdown */}
               <div className="space-y-3">
 
-                {/* Subtotal */}
                 <div className="flex justify-between text-sm">
                   <span className="font-semibold text-[#6c7e96]">Subtotal</span>
                   <span className="font-extrabold text-[#151a3c]">₹{calculations.subtotal.toLocaleString()}.00</span>
                 </div>
 
-                {/* Location Charges — total shown is per-vehicle rate × vehicle count */}
+                {/* Location Charges */}
                 <div className="space-y-2">
                   <div className="flex items-center space-x-2">
                     <input type="checkbox" checked={locationCharges}
@@ -768,75 +823,47 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                       </span>
                     )}
                   </div>
-
                   {locationCharges && (
                     <div className="pl-6 space-y-1.5">
-                      {/* Pickup charge row — shows per-vehicle rate × count */}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-[#6c7e96] font-medium">
                           ↑ Pickup · {customerData.pickupLocation || '—'}
-                          {totalSelectedCount > 1 && (
-                            <span className="text-[#6360DF] font-bold ml-1">×{totalSelectedCount}</span>
-                          )}
+                          {totalSelectedCount > 1 && <span className="text-[#6360DF] font-bold ml-1">×{totalSelectedCount}</span>}
                         </span>
                         <div className="flex items-center space-x-1.5">
                           {editingPickupCharge ? (
-                            <input
-                              autoFocus
-                              type="number" min="0"
-                              value={pickupChargeValue}
+                            <input autoFocus type="number" min="0" value={pickupChargeValue}
                               onChange={e => setPickupChargeValue(e.target.value)}
                               onBlur={() => setEditingPickupCharge(false)}
                               onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingPickupCharge(false); }}
-                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none"
-                            />
+                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none" />
                           ) : (
                             <>
-                              {/* ── CHANGED: show per-vehicle × count ── */}
-                              <span className="font-bold text-[#151a3c]">
-                                ₹{(pickupChargePerVehicle * totalSelectedCount).toLocaleString()}.00
-                              </span>
-                              <button onClick={() => setEditingPickupCharge(true)}
-                                className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                                </svg>
+                              <span className="font-bold text-[#151a3c]">₹{(pickupChargePerVehicle * totalSelectedCount).toLocaleString()}.00</span>
+                              <button onClick={() => setEditingPickupCharge(true)} className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                               </button>
                             </>
                           )}
                         </div>
                       </div>
-
-                      {/* Drop charge row — shows per-vehicle rate × count */}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-[#6c7e96] font-medium">
                           ↓ Drop · {customerData.dropLocation || '—'}
-                          {totalSelectedCount > 1 && (
-                            <span className="text-[#6360DF] font-bold ml-1">×{totalSelectedCount}</span>
-                          )}
+                          {totalSelectedCount > 1 && <span className="text-[#6360DF] font-bold ml-1">×{totalSelectedCount}</span>}
                         </span>
                         <div className="flex items-center space-x-1.5">
                           {editingDropCharge ? (
-                            <input
-                              autoFocus
-                              type="number" min="0"
-                              value={dropChargeValue}
+                            <input autoFocus type="number" min="0" value={dropChargeValue}
                               onChange={e => setDropChargeValue(e.target.value)}
                               onBlur={() => setEditingDropCharge(false)}
                               onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDropCharge(false); }}
-                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none"
-                            />
+                              className="w-16 text-right font-bold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-xs outline-none" />
                           ) : (
                             <>
-                              {/* ── CHANGED: show per-vehicle × count ── */}
-                              <span className="font-bold text-[#151a3c]">
-                                ₹{(dropChargePerVehicle * totalSelectedCount).toLocaleString()}.00
-                              </span>
-                              <button onClick={() => setEditingDropCharge(true)}
-                                className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                                </svg>
+                              <span className="font-bold text-[#151a3c]">₹{(dropChargePerVehicle * totalSelectedCount).toLocaleString()}.00</span>
+                              <button onClick={() => setEditingDropCharge(true)} className="p-0.5 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                               </button>
                             </>
                           )}
@@ -846,59 +873,35 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
                   )}
                 </div>
 
-                {/* Security Deposit — hidden until a vehicle is selected, then auto from tariff */}
+                {/* Security Deposit */}
                 <AnimatePresence>
                   {showDeposit && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="overflow-hidden">
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
                       <div className="flex items-center justify-between text-sm pt-0.5">
                         <div className="flex items-center space-x-2">
-                          {/* Checkbox kept for UI parity — deposit always shown when vehicle selected */}
-                          <input type="checkbox" checked readOnly
-                            className="w-4 h-4 rounded text-[#6360DF] focus:ring-[#6360DF] cursor-default" />
+                          <input type="checkbox" checked readOnly className="w-4 h-4 rounded text-[#6360DF] focus:ring-[#6360DF] cursor-default" />
                           <span className="font-semibold text-[#6c7e96]">Security Deposit</span>
                         </div>
                         <div className="flex items-center space-x-1.5">
                           {editingDeposit ? (
-                            <input
-                              autoFocus
-                              type="number" min="0"
-                              value={depositDisplayValue}
+                            <input autoFocus type="number" min="0" value={depositDisplayValue}
                               onChange={e => setDepositOverride(e.target.value)}
                               onBlur={() => setEditingDeposit(false)}
                               onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDeposit(false); }}
-                              className="w-20 text-right font-extrabold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-sm outline-none"
-                            />
+                              className="w-20 text-right font-extrabold text-[#151a3c] bg-[#F8F9FA] border border-[#6360DF] rounded-lg py-0.5 px-2 text-sm outline-none" />
                           ) : (
                             <>
-                              <span className="font-extrabold text-[#151a3c]">
-                                ₹{(parseFloat(depositDisplayValue) || 0).toLocaleString()}.00
-                              </span>
-                              <button
-                                onClick={() => setEditingDeposit(true)}
-                                className="p-1 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded-lg transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                                </svg>
+                              <span className="font-extrabold text-[#151a3c]">₹{(parseFloat(depositDisplayValue) || 0).toLocaleString()}.00</span>
+                              <button onClick={() => setEditingDeposit(true)} className="p-1 text-[#6c7e96] hover:text-[#6360DF] hover:bg-[#EEEDFA] rounded-lg transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                               </button>
-                              {/* Show reset hint if user has overridden */}
                               {depositOverride !== null && (
-                                <button
-                                  onClick={() => setDepositOverride(null)}
-                                  title="Reset to tariff default"
-                                  className="text-[9px] font-bold text-[#6360DF] hover:underline ml-1">
-                                  reset
-                                </button>
+                                <button onClick={() => setDepositOverride(null)} title="Reset to tariff default" className="text-[9px] font-bold text-[#6360DF] hover:underline ml-1">reset</button>
                               )}
                             </>
                           )}
                         </div>
                       </div>
-                      {/* Per-model deposit breakdown when multiple models selected */}
                       {selectedVehicles.length > 1 && depositOverride === null && (
                         <div className="pl-6 mt-1.5 space-y-1">
                           {selectedVehicles.map(sv => (

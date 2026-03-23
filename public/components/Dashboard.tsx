@@ -119,6 +119,10 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
   const [editProfile, setEditProfile] = useState({ ...profile });
   const [isEditing, setIsEditing] = useState(false);
 
+  // ── Service locations from owner_service_locations table ──────
+  const [serviceLocations, setServiceLocations] = useState<{ location_name: string; surcharge: number }[]>([]);
+  const [serviceLocationsLoading, setServiceLocationsLoading] = useState(false);
+
   const [stats, setStats] = useState<DashboardStats>({ totalVehicles: 0, availableVehicles: 0, activeBookings: 0, totalDrivers: 0, unallocatedToday: 0 });
   const [todayPickups, setTodayPickups] = useState<TodayBooking[]>([]);
   const [todayReturns, setTodayReturns] = useState<TodayBooking[]>([]);
@@ -141,6 +145,32 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
     { icon: <Settings />, label: 'Settings' },
     { icon: <Users />, label: 'Users' },
   ];
+
+  // ── Load service locations from the table (source of truth) ──
+  const loadServiceLocations = async () => {
+    setServiceLocationsLoading(true);
+    try {
+      const authUser = await getCurrentUser();
+      if (!authUser) return;
+      const { data: ownerRow } = await supabase.from('owners').select('id').eq('user_id', authUser.id).single();
+      if (!ownerRow) return;
+      const { data } = await supabase
+        .from('owner_service_locations')
+        .select('location_name, surcharge')
+        .eq('owner_id', ownerRow.id)
+        .order('location_name', { ascending: true });
+      setServiceLocations((data as any[]) || []);
+    } catch (e) {
+      console.error('Failed to load service locations:', e);
+    } finally {
+      setServiceLocationsLoading(false);
+    }
+  };
+
+  // Load service locations when profile modal opens
+  useEffect(() => {
+    if (isProfileOpen) loadServiceLocations();
+  }, [isProfileOpen]);
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -253,7 +283,9 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
         full_name: editProfile.fullName, business_name: editProfile.businessName,
         email: editProfile.email, business_address: editProfile.businessAddress,
         is_gst_enabled: editProfile.isGstEnabled, gst_type: editProfile.gstType || null,
-        gst_number: editProfile.gstNumber || null, service_locations: editProfile.locations,
+        gst_number: editProfile.gstNumber || null,
+        // Note: service_locations array intentionally not updated here —
+        // owner_service_locations table (managed via Settings) is the source of truth
       }).eq('user_id', authUser.id);
       if (error) { toast.error('Failed to save: ' + error.message); return; }
       setProfile({ ...editProfile }); setIsEditing(false); toast.success('Profile saved!');
@@ -280,9 +312,14 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
       {/* Sidebar */}
       <motion.aside className={`fixed inset-y-0 left-0 z-50 w-[260px] bg-white border-r border-[#d1d0eb] p-5 lg:relative lg:translate-x-0 transition-transform duration-300 ease-in-out flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden absolute top-6 right-6 p-2 text-[#6c7e96]"><X size={20} /></button>
-        <div className="flex items-center space-x-3 mb-10 px-1 pt-2">
-          <div className="w-10 h-10 bg-[#6360DF] rounded-xl flex items-center justify-center shadow-md"><CarIcon className="text-white w-6 h-6" /></div>
-          <span className="text-[20px] font-bold text-[#151a3c] tracking-tight">GaadiZai</span>
+        {/* Logo */}
+        <div className="mb-8 px-1 pt-2">
+          <img
+            src="/logo-color.png"
+            alt="GaadiZai"
+            className="w-full object-contain"
+            style={{ mixBlendMode: 'multiply', maxHeight: '90px' }}
+          />
         </div>
         <nav className="flex-1 space-y-2 px-1">
           {sidebarItems.map(item => (
@@ -333,7 +370,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
           </div>
         </header>
 
-        {/* Profile Modal — identical to before */}
+        {/* Profile Modal */}
         <AnimatePresence>
           {isProfileOpen && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -404,29 +441,71 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                         </div>
                       )}
                     </div>
+
+                    {/* ── Service Locations — display only from table, Settings is source of truth ── */}
                     <div className="space-y-4 md:col-span-2">
                       <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-widest flex items-center"><MapPinIcon size={12} className="mr-1.5" /> Service Locations</label>
-                        {isEditing && (
-                          <div className="relative">
-                            <select onChange={e => { if (e.target.value && !editProfile.locations.includes(e.target.value)) setEditProfile({...editProfile, locations: [...editProfile.locations, e.target.value]}); e.target.value=""; }}
-                              className="bg-[#EEEDFA] text-[#6360DF] text-[11px] font-bold px-3 py-1.5 rounded-lg outline-none cursor-pointer appearance-none pr-8">
-                              <option value="">+ Add Location</option>
-                              {goaLocations.filter(loc => !editProfile.locations.includes(loc)).map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                            </select>
-                            <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6360DF] pointer-events-none" />
-                          </div>
-                        )}
+                        <label className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-widest flex items-center">
+                          <MapPinIcon size={12} className="mr-1.5" /> Service Locations
+                        </label>
+                        {/* Redirect to Settings instead of editing inline */}
+                        <button
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            setActiveTab('Settings');
+                          }}
+                          className="flex items-center space-x-1 text-[#6360DF] text-[11px] font-bold hover:underline transition-all"
+                        >
+                          <Settings size={12} />
+                          <span>Manage in Settings</span>
+                        </button>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {(isEditing ? editProfile.locations : profile.locations).map((loc, i) => (
-                          <div key={i} className="bg-[#EEEDFA] text-[#6360DF] px-4 py-1.5 rounded-full text-xs font-bold flex items-center">
-                            {loc}
-                            {isEditing && <button onClick={() => setEditProfile({...editProfile, locations: editProfile.locations.filter(l => l !== loc)})} className="ml-2 text-[#6360DF]/40 hover:text-red-500 transition-colors"><X size={12} /></button>}
+
+                      {/* Display locations from owner_service_locations table */}
+                      {serviceLocationsLoading ? (
+                        <div className="flex items-center space-x-2 text-[#6c7e96] text-xs py-2">
+                          <Loader2 size={14} className="animate-spin" />
+                          <span>Loading locations...</span>
+                        </div>
+                      ) : serviceLocations.length === 0 ? (
+                        <div className="bg-[#F8F9FA] rounded-xl px-4 py-3 border border-slate-100">
+                          <p className="text-sm text-[#6c7e96] font-medium">
+                            No service locations configured.{' '}
+                            <button
+                              onClick={() => { setIsProfileOpen(false); setActiveTab('Settings'); }}
+                              className="text-[#6360DF] font-bold hover:underline"
+                            >
+                              Add in Settings →
+                            </button>
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap gap-2">
+                            {serviceLocations.map((loc) => (
+                              <div key={loc.location_name} className="bg-[#EEEDFA] text-[#6360DF] px-4 py-1.5 rounded-full text-xs font-bold flex items-center space-x-1.5">
+                                <span>{loc.location_name}</span>
+                                {loc.surcharge > 0 && (
+                                  <span className="text-[#6360DF]/60 font-medium">+₹{loc.surcharge}</span>
+                                )}
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                          {/* Helper note */}
+                          <p className="text-[11px] text-[#6c7e96] font-medium mt-1">
+                            To add, remove or edit surcharges —{' '}
+                            <button
+                              onClick={() => { setIsProfileOpen(false); setActiveTab('Settings'); }}
+                              className="text-[#6360DF] font-bold hover:underline"
+                            >
+                              go to Settings
+                            </button>
+                          </p>
+                        </>
+                      )}
                     </div>
+                    {/* ── End Service Locations ── */}
+
                   </div>
                 </div>
                 <div className="px-10 py-8 border-t border-slate-100 flex items-center justify-end space-x-4 shrink-0">

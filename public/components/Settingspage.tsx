@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Loader2, Check, X, Plus,
-  Clock, Trash2, Pencil,
+  Clock, Trash2, Pencil, Sun,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -50,6 +50,9 @@ const parseSurcharge = (v: string): number => {
 // Display surcharge: show "—" when 0
 const displaySurcharge = (v: number) =>
   v > 0 ? `₹${v.toFixed(2)}` : null;
+
+// Convert "HH:MM:SS" or "HH:MM" → "HH:MM" for <input type="time">
+const toTimeInput = (t: string) => (t ? t.slice(0, 5) : '');
 
 // ── Section Wrapper ───────────────────────────────────────────
 const Section: React.FC<{
@@ -191,6 +194,14 @@ const Settingspage: React.FC = () => {
   const [baseLocation,     setBaseLocation]     = useState('');
   const [baseLocationOrig, setBaseLocationOrig] = useState('');
 
+  // ── Day Timing state (NEW) ────────────────────────────────
+  const [editingDayTiming,  setEditingDayTiming]  = useState(false);
+  const [dayStartTime,      setDayStartTime]      = useState('09:00');
+  const [halfDayHours,      setHalfDayHours]      = useState('6');
+  const [dayStartTimeOrig,  setDayStartTimeOrig]  = useState('09:00');
+  const [halfDayHoursOrig,  setHalfDayHoursOrig]  = useState('6');
+  const [savingDayTiming,   setSavingDayTiming]   = useState(false);
+
   // ── Load ───────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
@@ -200,26 +211,36 @@ const Settingspage: React.FC = () => {
 
       const { data: owner } = await supabase
         .from('owners')
-        .select('id, night_timing_from, night_timing_to, base_location')
+        .select('id, night_timing_from, night_timing_to, base_location, day_start_time, half_day_hours')
         .eq('user_id', authUser.id)
         .single();
       if (!owner) { setLoading(false); return; }
 
       setOwnerId(owner.id);
+
+      // Night timings — identical to original
       const nFrom = owner.night_timing_from || '';
       const nTo   = owner.night_timing_to   || '';
       setNightFrom(nFrom); setNightFromOrig(nFrom);
       setNightTo(nTo);     setNightToOrig(nTo);
+
+      // Base location — identical to original
       const bLoc = owner.base_location || '';
       setBaseLocation(bLoc); setBaseLocationOrig(bLoc);
 
+      // Day timing — defaults: 09:00 start, 6h half day
+      const dst = toTimeInput(owner.day_start_time || '09:00:00');
+      const hdh = owner.half_day_hours != null ? String(owner.half_day_hours) : '6';
+      setDayStartTime(dst);    setDayStartTimeOrig(dst);
+      setHalfDayHours(hdh);   setHalfDayHoursOrig(hdh);
+
+      // Service locations — identical to original
       const { data: locs } = await supabase
         .from('owner_service_locations')
         .select('id, location_name, surcharge, night_surcharge')
         .eq('owner_id', owner.id)
         .order('created_at', { ascending: true });
 
-      // Convert numeric DB values → strings for editing
       const mappedLocs: ServiceLocation[] = (locs || []).map(l => ({
         id:             l.id,
         location_name:  l.location_name,
@@ -233,11 +254,10 @@ const Settingspage: React.FC = () => {
     load();
   }, []);
 
-  // ── Save Locations ─────────────────────────────────────────
+  // ── Save Locations — identical to original ─────────────────
   const saveLocations = async () => {
     setSavingLoc(true);
     try {
-      // Base location + Night timings
       const { error: nightErr } = await supabase
         .from('owners')
         .update({
@@ -248,7 +268,6 @@ const Settingspage: React.FC = () => {
         .eq('id', ownerId);
       if (nightErr) { toast.error('Failed to save settings.'); return; }
 
-      // Insert new rows (convert string → number for DB)
       for (const loc of serviceLocations.filter(l => l.isNew)) {
         const { error } = await supabase.from('owner_service_locations').insert({
           owner_id:        ownerId,
@@ -259,7 +278,6 @@ const Settingspage: React.FC = () => {
         if (error) { toast.error('Failed to add: ' + loc.location_name); return; }
       }
 
-      // Update changed existing rows
       for (const loc of serviceLocations.filter(l => !l.isNew)) {
         const orig = serviceLocationsOrig.find(o => o.id === loc.id);
         if (!orig) continue;
@@ -276,7 +294,6 @@ const Settingspage: React.FC = () => {
         }
       }
 
-      // Delete removed rows
       for (const orig of serviceLocationsOrig) {
         if (!serviceLocations.find(l => l.id === orig.id)) {
           await supabase.from('owner_service_locations').delete().eq('id', orig.id);
@@ -285,7 +302,6 @@ const Settingspage: React.FC = () => {
 
       toast.success('Locations saved!');
 
-      // Refresh to get real DB IDs + values
       const { data: locs } = await supabase
         .from('owner_service_locations')
         .select('id, location_name, surcharge, night_surcharge')
@@ -331,15 +347,60 @@ const Settingspage: React.FC = () => {
   const removeLocationRow = (id: string) =>
     setServiceLocations(prev => prev.filter(l => l.id !== id));
 
-  // Update a surcharge field — plain string, no parsing
   const updateSurcharge = (id: string, field: 'surcharge' | 'night_surcharge', value: string) =>
     setServiceLocations(prev =>
       prev.map(l => l.id === id ? { ...l, [field]: value } : l)
     );
 
-  // ── Time formatter ─────────────────────────────────────────
+  // ── Save Day Timing (NEW) ─────────────────────────────────
+  const saveDayTiming = async () => {
+    const hdh = parseFloat(halfDayHours);
+    if (isNaN(hdh) || hdh <= 0 || hdh >= 24) {
+      toast.error('Half day hours must be between 0 and 24.'); return;
+    }
+    setSavingDayTiming(true);
+    try {
+      const { error } = await supabase
+        .from('owners')
+        .update({
+          day_start_time: dayStartTime + ':00',
+          half_day_hours: hdh,
+        })
+        .eq('id', ownerId);
+      if (error) { toast.error('Failed to save day timings.'); return; }
+      setDayStartTimeOrig(dayStartTime);
+      setHalfDayHoursOrig(halfDayHours);
+      setEditingDayTiming(false);
+      toast.success('Day timing saved!');
+    } finally { setSavingDayTiming(false); }
+  };
+
+  const cancelDayTiming = () => {
+    setDayStartTime(dayStartTimeOrig);
+    setHalfDayHours(halfDayHoursOrig);
+    setEditingDayTiming(false);
+  };
+
+  // ── Derived: half day cutoff time for display ─────────────
+  // halfDayCutoff = dayStartTime + halfDayHours
+  const halfDayCutoffDisplay = (() => {
+    try {
+      const [h, m] = dayStartTimeOrig.split(':').map(Number);
+      const hdh = parseFloat(halfDayHoursOrig) || 6;
+      const totalMins = h * 60 + m + Math.round(hdh * 60);
+      const cutH = Math.floor(totalMins / 60) % 24;
+      const cutM = totalMins % 60;
+      const d = new Date();
+      d.setHours(cutH, cutM, 0, 0);
+      return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    } catch { return '—'; }
+  })();
+
+  // ── Time formatter — identical to original ─────────────────
   const fmtTime = (t: string) =>
-    t ? new Date('1970-01-01T' + t).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+    t ? new Date('1970-01-01T' + t).toLocaleTimeString('en-IN', {
+      hour: '2-digit', minute: '2-digit', hour12: true,
+    }) : '—';
 
   if (loading) return (
     <div className="flex items-center justify-center py-32 text-[#6c7e96]">
@@ -355,7 +416,7 @@ const Settingspage: React.FC = () => {
         <p className="text-[#6c7e96] text-sm font-medium mt-1">Manage your service areas and night timings</p>
       </div>
 
-      {/* ── Locations Card ────────────────────────────────────── */}
+      {/* ── Locations Card — identical to original ────────────── */}
       <Section
         icon={<MapPin size={18} />}
         title="Locations"
@@ -366,7 +427,6 @@ const Settingspage: React.FC = () => {
         onSave={saveLocations}
         onCancel={cancelLocations}
       >
-        {/* Base Location — no surcharge, placed before table */}
         <div className="mb-5 space-y-1.5">
           <label className={labelCls}>Base Location (HQ)</label>
           <p className="text-[11px] text-[#6c7e96] font-medium -mt-0.5">Your main operating location — no surcharge applies here</p>
@@ -392,7 +452,6 @@ const Settingspage: React.FC = () => {
           )}
         </div>
 
-        {/* Table */}
         <div className="overflow-x-auto rounded-xl border border-[#d1d0eb]/40">
           <table className="w-full text-left">
             <thead>
@@ -417,7 +476,6 @@ const Settingspage: React.FC = () => {
                 </tr>
               ) : serviceLocations.map(loc => (
                 <tr key={loc.id} className="hover:bg-[#fafafa] transition-colors">
-                  {/* Location name */}
                   <td className="px-5 py-3">
                     {editingLocations ? (
                       <LocationAutocomplete
@@ -432,56 +490,32 @@ const Settingspage: React.FC = () => {
                       </div>
                     )}
                   </td>
-
-                  {/* Surcharge */}
                   <td className="px-5 py-3">
                     {editingLocations ? (
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0"
-                        value={loc.surcharge}
+                      <input type="number" min="0" step="0.01" placeholder="0" value={loc.surcharge}
                         onChange={e => updateSurcharge(loc.id, 'surcharge', e.target.value)}
-                        className={inputCls + ' w-32'}
-                      />
+                        className={inputCls + ' w-32'} />
                     ) : (
                       <span className="text-sm font-bold text-[#151a3c]">
-                        {displaySurcharge(parseSurcharge(loc.surcharge)) ?? (
-                          <span className="text-[#6c7e96] font-normal">—</span>
-                        )}
+                        {displaySurcharge(parseSurcharge(loc.surcharge)) ?? <span className="text-[#6c7e96] font-normal">—</span>}
                       </span>
                     )}
                   </td>
-
-                  {/* Night Surcharge */}
                   <td className="px-5 py-3">
                     {editingLocations ? (
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0"
-                        value={loc.night_surcharge}
+                      <input type="number" min="0" step="0.01" placeholder="0" value={loc.night_surcharge}
                         onChange={e => updateSurcharge(loc.id, 'night_surcharge', e.target.value)}
-                        className={inputCls + ' w-32'}
-                      />
+                        className={inputCls + ' w-32'} />
                     ) : (
                       <span className="text-sm font-bold text-[#151a3c]">
-                        {displaySurcharge(parseSurcharge(loc.night_surcharge)) ?? (
-                          <span className="text-[#6c7e96] font-normal">—</span>
-                        )}
+                        {displaySurcharge(parseSurcharge(loc.night_surcharge)) ?? <span className="text-[#6c7e96] font-normal">—</span>}
                       </span>
                     )}
                   </td>
-
-                  {/* Delete button */}
                   {editingLocations && (
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => removeLocationRow(loc.id)}
-                        className="p-1.5 text-[#cbd5e1] hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                      >
+                      <button onClick={() => removeLocationRow(loc.id)}
+                        className="p-1.5 text-[#cbd5e1] hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
                         <Trash2 size={13} />
                       </button>
                     </td>
@@ -492,7 +526,6 @@ const Settingspage: React.FC = () => {
           </table>
         </div>
 
-        {/* Add row — edit mode only */}
         {editingLocations && (
           <div className="flex items-center gap-2 mt-3">
             <LocationAutocomplete
@@ -502,16 +535,13 @@ const Settingspage: React.FC = () => {
               existingLocations={serviceLocations.map(l => l.location_name)}
               placeholder="Search Goa locations to add..."
             />
-            <button
-              onClick={() => addLocationRow()}
-              className="flex items-center space-x-1.5 bg-[#6360DF] hover:bg-[#5451d0] text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0"
-            >
+            <button onClick={() => addLocationRow()}
+              className="flex items-center space-x-1.5 bg-[#6360DF] hover:bg-[#5451d0] text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0">
               <Plus size={13} /><span>Add</span>
             </button>
           </div>
         )}
 
-        {/* Night Timings */}
         <div className="mt-6 pt-5 border-t border-[#d1d0eb]/30">
           <div className="flex items-center space-x-2 mb-4">
             <Clock size={14} className="text-[#6360DF]" />
@@ -542,9 +572,96 @@ const Settingspage: React.FC = () => {
           )}
         </div>
       </Section>
+
+      {/* ── Day & Half Day Duration Card (NEW) ───────────────── */}
+      <Section
+        icon={<Sun size={18} />}
+        title="Day & Half Day Duration"
+        subtitle="Define when a billing day starts and the half day cutoff for bookings"
+        editing={editingDayTiming}
+        saving={savingDayTiming}
+        onEdit={() => setEditingDayTiming(true)}
+        onSave={saveDayTiming}
+        onCancel={cancelDayTiming}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+
+          {/* Day Start Time */}
+          <div className="space-y-1.5">
+            <label className={labelCls}>Day Start Time</label>
+            <p className="text-[11px] text-[#6c7e96] font-medium">
+              Each billing day begins at this time (default: 09:00 AM)
+            </p>
+            {editingDayTiming ? (
+              <input
+                type="time"
+                value={dayStartTime}
+                onChange={e => setDayStartTime(e.target.value)}
+                className={inputCls}
+              />
+            ) : (
+              <p className="text-sm font-bold text-[#151a3c] py-1">
+                {fmtTime(dayStartTime)}
+              </p>
+            )}
+          </div>
+
+          {/* Half Day Hours */}
+          <div className="space-y-1.5">
+            <label className={labelCls}>Half Day — Hours After Day Start</label>
+            <p className="text-[11px] text-[#6c7e96] font-medium">
+              Return within this many hours of day start → charged as half day
+            </p>
+            {editingDayTiming ? (
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0.5"
+                  max="23"
+                  step="0.5"
+                  value={halfDayHours}
+                  onChange={e => setHalfDayHours(e.target.value)}
+                  className={inputCls}
+                  placeholder="e.g. 6"
+                />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[#6c7e96] text-xs font-bold pointer-events-none">
+                  hrs
+                </span>
+              </div>
+            ) : (
+              <p className="text-sm font-bold text-[#151a3c] py-1">
+                {halfDayHoursOrig} hours
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* How-it-works summary pills — always visible */}
+        <div className="mt-6 bg-[#F8F9FF] border border-[#d1d0eb]/50 rounded-2xl px-5 py-4 space-y-3">
+          <p className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-widest">How billing days are counted</p>
+          <div className="flex flex-wrap gap-2.5">
+            <div className="flex items-center space-x-2 bg-white border border-[#d1d0eb] rounded-xl px-3 py-1.5 text-xs font-medium text-[#151a3c]">
+              <div className="w-2 h-2 rounded-full bg-[#6360DF] shrink-0" />
+              <span>Full day = {fmtTime(dayStartTimeOrig)} → {fmtTime(dayStartTimeOrig)} (next day)</span>
+            </div>
+            <div className="flex items-center space-x-2 bg-white border border-[#d1d0eb] rounded-xl px-3 py-1.5 text-xs font-medium text-[#151a3c]">
+              <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <span>Half day = return by {halfDayCutoffDisplay} (within {halfDayHoursOrig}h of day start)</span>
+            </div>
+            <div className="flex items-center space-x-2 bg-white border border-[#d1d0eb] rounded-xl px-3 py-1.5 text-xs font-medium text-[#151a3c]">
+              <div className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
+              <span>Return after {halfDayCutoffDisplay} = full extra day charged</span>
+            </div>
+          </div>
+          <p className="text-[11px] text-[#6c7e96] font-medium">
+            Example: pickup 19 Mar 1:30 PM → drop 22 Mar 1:30 PM, day start {fmtTime(dayStartTimeOrig)} →{' '}
+            <span className="font-bold text-[#151a3c]">4 billing days</span>
+            {' '}(day 4 = 9AM–1:30PM exceeds {halfDayHoursOrig}h → full day)
+          </p>
+        </div>
+      </Section>
     </div>
   );
 };
-
 
 export default Settingspage;

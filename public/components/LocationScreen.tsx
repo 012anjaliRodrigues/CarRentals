@@ -9,6 +9,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase, getCurrentUser } from '../supabaseClient';
 
 const ALL_LOCATIONS = [
   // North Goa - Main Towns
@@ -142,9 +143,60 @@ const LocationScreen: React.FC<LocationScreenProps> = ({ onComplete, onBack }) =
   }, []);
   // ─────────────────────────────────────────────────────────────
 
-  const handleComplete = () => {
+  // ── On complete: write to BOTH tables ────────────────────────
+  // 1. owners.service_locations array (handled by parent via onComplete)
+  // 2. owner_service_locations table with surcharge=0 defaults
+  //    — only inserts locations that don't already exist for this owner
+  const handleComplete = async () => {
+    try {
+      const authUser = await getCurrentUser();
+      if (authUser) {
+        const { data: ownerRow } = await supabase
+          .from('owners')
+          .select('id')
+          .eq('user_id', authUser.id)
+          .single();
+
+        if (ownerRow) {
+          const ownerId = ownerRow.id;
+
+          // Fetch existing location names for this owner to avoid duplicates
+          const { data: existing } = await supabase
+            .from('owner_service_locations')
+            .select('location_name')
+            .eq('owner_id', ownerId);
+
+          const existingNames = new Set(
+            ((existing as any[]) || []).map((r: any) => r.location_name)
+          );
+
+          // Build rows for locations not already in the table
+          // Include "Panjim" (base) + all selected locations
+          const allToInsert = ['Panjim', ...selectedLocations].filter(
+            loc => !existingNames.has(loc)
+          );
+
+          if (allToInsert.length > 0) {
+            await supabase.from('owner_service_locations').insert(
+              allToInsert.map(loc => ({
+                owner_id:       ownerId,
+                location_name:  loc,
+                surcharge:      0,
+                night_surcharge: 0,
+              }))
+            );
+          }
+        }
+      }
+    } catch (e) {
+      // Non-blocking — parent flow continues regardless
+      console.error('Failed to seed owner_service_locations:', e);
+    }
+
+    // Always call parent's onComplete so the onboarding flow continues
     onComplete(selectedLocations);
   };
+  // ─────────────────────────────────────────────────────────────
 
   const filteredLocations = useMemo(() => {
     if (!searchQuery.trim()) return [];
@@ -173,12 +225,6 @@ const LocationScreen: React.FC<LocationScreenProps> = ({ onComplete, onBack }) =
         
         {/* Progress Header */}
         <div className="flex items-center justify-between mb-10">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-[#6360DF] rounded-full flex items-center justify-center">
-              <span className="text-white font-bold text-xs">G</span>
-            </div>
-            <span className="text-xl font-bold text-[#151a3c]">GaadiZai</span>
-          </div>
           <div className="flex items-center space-x-4">
             <span className="text-[10px] font-bold text-[#6360DF] tracking-widest uppercase">
               Step 3 of 3

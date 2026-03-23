@@ -15,6 +15,12 @@ import { getCurrentUser, getCurrentOwner, ensureDevSession, createOwnerIfNotExis
 
 const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<AppState>(AppState.SPLASH);
+
+  // ── Splash: tracks whether splash has finished so we can remove it ─
+  // Kept separate from currentScreen so the splash can overlap the
+  // main app briefly during its own fade-out without killing the video.
+  const [splashDone, setSplashDone] = useState(false);
+
   const [userProfile, setUserProfile] = useState<UserProfile>({
     fullName: '',
     businessName: '',
@@ -53,13 +59,10 @@ const App: React.FC = () => {
     }
   };
 
-  // Splash → Login
-  useEffect(() => {
-    if (currentScreen === AppState.SPLASH) {
-      const timer = setTimeout(() => setCurrentScreen(AppState.LOGIN), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [currentScreen]);
+  // ── REMOVED: the old 3-second timer that killed the video early ──
+  // SplashScreen now controls its own lifecycle via onFinished().
+  // When onFinished fires, we set splashDone=true (removes splash from DOM)
+  // and advance to LOGIN — after the video + brand fade are complete.
 
   // On mount: resume from existing session
   useEffect(() => {
@@ -105,16 +108,13 @@ const App: React.FC = () => {
   }, []);
 
   // ─── Dev: Skip to Onboarding ──────────────────────────────────────────────
-  // Creates a real Supabase session via email+password so all DB writes work.
-  // No UI change — same button, just now saves real data.
   const handleSkipToOnboarding = async () => {
     const userId = await ensureDevSession();
     if (!userId) {
       console.error('Could not create dev session');
-      setCurrentScreen(AppState.IDENTITY); // still navigate, saves will just fail silently
+      setCurrentScreen(AppState.IDENTITY);
       return;
     }
-    // Bootstrap owner row so ownerUpdate has something to UPDATE (not INSERT)
     await createOwnerIfNotExists(userId, 'dev_owner');
     setCurrentScreen(AppState.IDENTITY);
   };
@@ -122,13 +122,24 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#D3D2EC]">
       <Toaster position="top-right" />
-      <AnimatePresence mode="wait">
 
-        {currentScreen === AppState.SPLASH && (
-          <motion.div key="splash" initial={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}>
-            <SplashScreen />
-          </motion.div>
-        )}
+      {/* ── Splash screen sits on top (z-[9999]) until it finishes ──
+          Rendered outside AnimatePresence so React never forcibly
+          unmounts it mid-video. It removes itself after its own fade. */}
+      {!splashDone && (
+        <SplashScreen
+          onFinished={() => {
+            setSplashDone(true);
+            // Only advance to LOGIN if we're still on the splash screen
+            // (bootstrapFromSession may have already navigated elsewhere)
+            setCurrentScreen(prev =>
+              prev === AppState.SPLASH ? AppState.LOGIN : prev
+            );
+          }}
+        />
+      )}
+
+      <AnimatePresence mode="wait">
 
         {currentScreen === AppState.LOGIN && (
           <motion.div key="login" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.4 }}>

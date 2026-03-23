@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Car, Headphones, ArrowLeft } from 'lucide-react';
+import { Headphones, ArrowLeft } from 'lucide-react';
 import { supabase, createOwnerIfNotExists, ensureDevSession } from '../supabaseClient';
 import { toast } from 'react-hot-toast';
 
@@ -124,9 +124,14 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
       <div className="bg-white rounded-[2rem] shadow-[0_10px_30px_rgba(0,0,0,0.05)] w-full max-w-[440px] p-10 md:p-12 text-center">
         
         <div className="flex justify-center mb-6">
-          <div className="w-14 h-14 bg-[#6360DF] rounded-2xl flex items-center justify-center shadow-lg shadow-[#6360df22]">
-            <Car className="text-white w-7 h-7" />
-          </div>
+          {/* Logo — color version on white background
+              mix-blend-mode:multiply makes the black background transparent */}
+          <img
+            src="/logo-color.png"
+            alt="GaadiZai"
+            className="w-20 h-20 object-contain"
+            style={{ mixBlendMode: 'multiply' }}
+          />
         </div>
 
         <h2 className="text-[26px] font-bold text-[#151a3c] mb-2 tracking-tight">
