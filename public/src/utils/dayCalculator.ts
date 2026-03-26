@@ -107,7 +107,7 @@ export interface DaySegment {
       current = next;
     }
   
-    // ── Remaining time after last boundary ─────────────────────
+    // ── Remaining time after last  boundary ─────────────────────
     const remainingH = (drop.getTime() - current.getTime()) / 3_600_000;
     if (remainingH > 0) {
       const isHalf = remainingH <= halfDayHours;

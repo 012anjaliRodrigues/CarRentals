@@ -146,7 +146,7 @@ const GstScreen: React.FC<GstScreenProps> = ({ onContinue, onBack }) => {
         </div>
       </div>
 
-      {/* External Support Link */}
+      {/* External  Support Link */}
       <div className="mt-8 flex items-center space-x-2 text-[#151a3c] opacity-60 hover:opacity-100 transition-opacity cursor-pointer group">
         <div className="bg-[#151a3c]/10 p-1.5 rounded-lg">
           <Info className="w-4 h-4" />

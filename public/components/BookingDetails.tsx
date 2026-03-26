@@ -659,7 +659,7 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, mode = 'detail
             </div>
           </motion.div>
 
-          {/* ── Sidebar (UNCHANGED) ── */}
+          {/* ── Sidebar  (UNCHANGED) ── */}
           <motion.aside
             initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
             className="flex-[3] w-full lg:max-w-[360px] space-y-6"

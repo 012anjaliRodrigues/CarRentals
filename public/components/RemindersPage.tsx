@@ -135,7 +135,7 @@ const RemindersPage: React.FC = () => {
         const matchesStatus   = statusFilter   === 'All Statuses'   || r.status   === statusFilter;
         const matchesPriority = priorityFilter === 'All Priorities' || r.priority === priorityFilter;
   
-        // When a specific date is selected (not today), show only that date's reminders
+        // When a  specific date is selected (not today), show only that date's reminders
         const matchesDate = selectedDate === today || r.dueDate === selectedDate;
   
         return matchesSearch && matchesType && matchesStatus && matchesPriority && matchesDate;

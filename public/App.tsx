@@ -275,6 +275,6 @@ const App: React.FC = () => {
       </AnimatePresence>
     </div>
   );
-};
+}; 
 
 export default App;

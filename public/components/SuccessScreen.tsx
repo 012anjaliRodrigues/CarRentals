@@ -21,7 +21,7 @@ const SuccessScreen: React.FC<SuccessScreenProps> = ({ onFinish }) => {
     <div className="min-h-screen bg-[#D3D2EC] flex flex-col items-center justify-center p-4">
       <div className="bg-white rounded-[3rem] shadow-[0_25px_60px_rgba(0,0,0,0.1)] w-full max-w-[500px] overflow-hidden p-12 text-center relative">
         
-        {/* Background Sparkles Effect */}
+        {/* Background  Sparkles Effect */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-20">
           <motion.div 
             animate={{ 

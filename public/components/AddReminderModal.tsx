@@ -43,7 +43,7 @@ const AddReminderModal: React.FC<AddReminderModalProps> = ({ isOpen, onClose, on
   const [isVehicleOpen, setIsVehicleOpen] = useState(false);
   const [isTypeOpen, setIsTypeOpen] = useState(false);
 
-  // Group vehicles by category
+  // Group vehicles by  category
   const groupedVehicles = vehicles.reduce((acc, v) => {
     if (!acc[v.category]) acc[v.category] = [];
     acc[v.category].push(v);

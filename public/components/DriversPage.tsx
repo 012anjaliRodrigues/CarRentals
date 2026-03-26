@@ -788,7 +788,7 @@ const DriversPage: React.FC = () => {
                               )}
                             </td>
 
-                            {/* Active toggle */}
+                            {/* Active  toggle */}
                             <td className="py-5 px-6 whitespace-nowrap">
                               <div className="flex items-center space-x-2">
                                 {togglingId === driver.id ? (

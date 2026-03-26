@@ -259,7 +259,7 @@ const VehiclesPage: React.FC = () => {
         <div className="overflow-x-auto">
           <table className="w-full text-left">
 
-            {/* Table header — darker bg */}
+            {/* Table  header — darker bg */}
             <thead>
               <tr className="bg-[#d6d5df] text-[10px] font-bold text-[#4a4870] tracking-widest uppercase border-b border-[#cccbe8]">
                 <th className="pl-8 py-4 font-bold">Vehicle No.</th>

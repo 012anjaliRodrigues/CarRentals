@@ -636,7 +636,7 @@ const Settingspage: React.FC = () => {
           </div>
         </div>
 
-        {/* How-it-works summary pills — always visible */}
+        {/* How-it-works  summary pills — always visible */}
         <div className="mt-6 bg-[#F8F9FF] border border-[#d1d0eb]/50 rounded-2xl px-5 py-4 space-y-3">
           <p className="text-[11px] font-bold text-[#6c7e96] uppercase tracking-widest">How billing days are counted</p>
           <div className="flex flex-wrap gap-2.5">

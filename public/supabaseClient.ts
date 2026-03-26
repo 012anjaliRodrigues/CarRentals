@@ -87,7 +87,7 @@ export const createOwnerIfNotExists = async (userId: string, phone: string) => {
 
   if (existingOwner) return existingOwner;
 
-  // Ensure public.users row exists
+  // Ensure  public.users row exists
   const { error: userInsertError } = await supabase
     .from('users')
     .insert({

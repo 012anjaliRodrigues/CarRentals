@@ -488,7 +488,7 @@ const AddNewVehicle: React.FC<AddNewVehicleProps> = ({ onSave, onCancel }) => {
           </div>
         </div>
 
-        {/* Footer */}
+        {/* Footer  */}
         <div className="bg-[#f8fafc] px-8 py-6 flex items-center justify-end space-x-6 border-t border-[#d1d0eb]/30">
           <button
             type="button"

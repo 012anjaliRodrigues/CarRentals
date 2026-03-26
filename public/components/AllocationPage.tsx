@@ -816,7 +816,7 @@ const AllocationPage: React.FC = () => {
                           )}
                         </td>
 
-                        {/* Action */}
+                        {/* Action  */}
                         <td className="py-4 px-6 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-center">
                             {row.isAllocated && !isEditing ? (

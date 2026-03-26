@@ -60,7 +60,7 @@ const AllocationDetail: React.FC<AllocationDetailProps> = ({ allocation, onBack,
         animate={{ opacity: 1, x: 0 }}
         className="space-y-8 pb-10"
       >
-        {/* Header */}
+        {/* Header  */}
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <button 

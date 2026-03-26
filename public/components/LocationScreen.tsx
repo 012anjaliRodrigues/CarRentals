@@ -355,7 +355,7 @@ const LocationScreen: React.FC<LocationScreenProps> = ({ onComplete, onBack }) =
           </div>
         </div>
 
-        {/* Footer Actions */}
+        {/* Footer Actions  */}
         <div className="flex items-center justify-between pt-6 border-t border-[#f1f5f9]">
           <button
             onClick={onBack}

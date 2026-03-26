@@ -709,7 +709,7 @@ const UsersPage: React.FC = () => {
           <div className="divide-y divide-slate-50">
             {filtered.map(staff => (
               <div key={staff.id}>
-                {/* Desktop row */}
+                {/*  Desktop row */}
                 <div className="hidden md:grid grid-cols-12 px-8 py-5 items-center transition-colors hover:bg-[#f8f9fc]/50">
                   <div className="col-span-3 flex items-center space-x-3">
                     <div className="w-9 h-9 rounded-full bg-[#EEEDFA] flex items-center justify-center text-[#6360DF] text-[12px] font-extrabold shrink-0">

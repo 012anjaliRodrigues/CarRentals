@@ -556,7 +556,7 @@ const VehicleProfile: React.FC<VehicleProfileProps> = ({
         )}
       </AnimatePresence>
 
-      {/* ── Blackout Popup ── */}
+      {/* ──  Blackout Popup ── */}
       <AnimatePresence>
         {showBlackout && ownerId && (
           <BlackoutPopup

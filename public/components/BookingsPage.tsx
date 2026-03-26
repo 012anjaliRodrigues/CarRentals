@@ -227,7 +227,7 @@ const BookingsPage: React.FC = () => {
           </motion.div>
         )}
 
-        {/* ── Details ── */}
+        {/* ── Details  ── */}
         {view === 'details' && selectedBooking && (
           <motion.div key="details" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
             <BookingDetails booking={selectedBooking} mode="details" onBack={() => setView('list')} onEdit={() => {}} />

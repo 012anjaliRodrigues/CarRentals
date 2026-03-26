@@ -73,7 +73,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onFinished }) => {
         </video>
       </div>
 
-      {/* ── Brand layer (fades in after video ends) ── */}
+      {/* ── Brand layer  (fades in after video ends) ── */}
       <div
         className="absolute inset-0 bg-[#D3D2EC] flex flex-col items-center justify-center"
         style={{

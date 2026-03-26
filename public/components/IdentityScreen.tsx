@@ -138,7 +138,7 @@ const IdentityScreen: React.FC<IdentityScreenProps> = ({ onContinue, onLogout })
         </div>
       </div>
 
-      {/* External Support Link */}
+      {/* External  Support Link */}
       <div className="mt-10 flex items-center space-x-2 text-[#151a3c] opacity-60 hover:opacity-100 transition-opacity cursor-pointer group">
         <div className="bg-[#151a3c]/10 p-1 rounded-md">
           <UserCircle className="w-4 h-4" />

@@ -163,7 +163,7 @@ const OtpScreen: React.FC<OtpScreenProps> = ({ phoneNumber, onVerify, onBack }) 
             ))}
           </div>
 
-          {/* Resend — mock just shows a toast */}
+          {/* Resend  — mock just shows a toast */}
           <button
             type="button"
             className="text-[#6360DF] font-bold text-[13px] mb-8 hover:underline"

@@ -833,7 +833,7 @@ const HandoverPage: React.FC = () => {
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               className="fixed inset-y-0 right-0 z-[120] w-full max-w-[500px] bg-white shadow-2xl flex flex-col">
 
-              {/* Panel header */}
+              {/* Panel  header */}
               <div className={`px-8 py-5 border-b flex items-center justify-between shrink-0 ${selectedRow.type === 'Drop' ? 'bg-orange-50 border-orange-100' : 'bg-[#f0f4ff] border-blue-100'}`}>
                 <div className="flex items-center space-x-3">
                   <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${selectedRow.type === 'Drop' ? 'bg-orange-100 text-orange-500' : 'bg-[#EEEDFA] text-[#6360DF]'}`}>

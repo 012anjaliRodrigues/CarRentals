@@ -559,7 +559,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
                 {/* 2-col action sections */}
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
-                  {/* Today's Pickups */}
+                  {/* Today's  Pickups */}
                   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
                     className="bg-white rounded-[2rem] shadow-sm border border-slate-50 overflow-hidden">
                     <SectionHeader title="Today's Bookings" subtitle={`${todayPickups.length} booking${todayPickups.length !== 1 ? 's' : ''} `}

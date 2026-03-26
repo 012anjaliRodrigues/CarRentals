@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 
-// ── Types ──────────────────────────────────────────────────────
+// ──  Types ──────────────────────────────────────────────────────
 interface TariffRecord {
   id: string;
   modelId: string;

@@ -35,7 +35,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onOtpSent, onSkipToDashboard,
     <div className="min-h-screen bg-[#D3D2EC] flex flex-col items-center justify-center p-4">
       <div className="bg-white rounded-[2rem] shadow-[0_10px_30px_rgba(0,0,0,0.05)] w-full max-w-[440px] p-10 md:p-12 text-center">
         <div className="flex justify-center mb-6">
-          {/* Logo — color version on white background
+          {/* Logo  — color version on white background
               mix-blend-mode:multiply makes the black background transparent */}
           <img
             src="/logo-color.png"

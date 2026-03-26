@@ -32,7 +32,7 @@ const ReminderDetailsPanel: React.FC<ReminderDetailsPanelProps> = ({
     type: '', priority: 'High', dueDate: '', notes: ''
   });
 
-  // Reset edit form whenever reminder changes or panel opens
+  // Reset edit f orm whenever reminder changes or panel opens
   React.useEffect(() => {
     if (reminder) {
       setEditForm({ type: reminder.type, priority: reminder.priority, dueDate: reminder.dueDate, notes: reminder.notes || '' });

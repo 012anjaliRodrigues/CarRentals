@@ -21,7 +21,7 @@ const AddDriver: React.FC<AddDriverProps> = ({ onSave, onCancel }) => {
   const [licenseNo, setLicenseNo] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  // ── Supabase save ─────────────────────────────────────────────
+  // ── Supabase  save ─────────────────────────────────────────────
   const handleSave = async () => {
     if (!name || !phone || !licenseNo) return;
     setIsSaving(true);

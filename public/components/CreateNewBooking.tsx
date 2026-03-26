@@ -41,7 +41,7 @@ interface CreateNewBookingProps {
 
 // ── Night time-point check ────────────────────────────────────
 // Returns true if a specific datetime falls within the night window.
-// Handles midnight-wrapping windows (e.g. 22:00 → 06:00).
+// Handles midnight-wrapping windows (e.g. 22:00 → 06:00). 
 function isTimeInNightWindow(
   isoDateTime: string,
   nightFrom:   string, // "HH:MM"
