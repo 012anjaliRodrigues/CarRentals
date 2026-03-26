@@ -69,7 +69,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onFinished }) => {
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
         >
           {/* Place splash.mp4 in your /public folder */}
-          <source src="/splash.mp4" type="video/mp4" />
+          <source src="/splashh.mp4" type="video/mp4" />
         </video>
       </div>
 
@@ -87,7 +87,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onFinished }) => {
               Place logo-white.png in /public folder
               mix-blend-mode:multiply makes the black background transparent */}
           <img
-            src="/logo-color.png"
+            src="/logo-colorr.png"
             alt="GaadiZai"
             className="w-32 h-32 object-contain"
             style={{ mixBlendMode: 'multiply' }}
