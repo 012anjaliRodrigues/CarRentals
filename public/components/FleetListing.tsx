@@ -119,7 +119,6 @@ export const resolveActiveTariff = (
 };
 
 // ── Shared: override section UI ───────────────────────────────
-// Used by both single-model and bulk popup
 const OverrideSection: React.FC<{
   entries: TariffEntry[];
   modelName: string;
@@ -195,16 +194,21 @@ const TariffPopup: React.FC<{
   const [entries,         setEntries]         = useState<TariffEntry[]>([]);
   const [loading,         setLoading]         = useState(true);
   const [saving,          setSaving]          = useState(false);
-  // which entry is the override (by entry.id)
   const [overrideEntryId, setOverrideEntryId] = useState<string | null>(null);
 
   // ── Bulk-model state ──
-  const [bulkRows,    setBulkRows]    = useState<BulkModelRow[]>([]);
-  const [periodCount, setPeriodCount] = useState(1);
-  const [bulkLoading, setBulkLoading] = useState(true);
-  const [bulkSaving,  setBulkSaving]  = useState(false);
+  const [bulkRows,     setBulkRows]     = useState<BulkModelRow[]>([]);
+  const [periodCount,  setPeriodCount]  = useState(1);
+  const [bulkLoading,  setBulkLoading]  = useState(true);
+  const [bulkSaving,   setBulkSaving]   = useState(false);
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // ── Global fill row state (NEW) ──────────────────────────────
+  // One row of inputs that, when typed into, fills ALL model rows for that slot
+  const [globalFill, setGlobalFill] = useState<{
+    from: string; to: string; rate: string; deposit: string;
+  }>({ from: '', to: '', rate: '', deposit: '' });
 
   const newBlankEntry = (): TariffEntry => ({
     id: '__new__' + Date.now() + Math.random(),
@@ -235,7 +239,6 @@ const TariffPopup: React.FC<{
 
       setEntries(mapped.length > 0 ? mapped : [newBlankEntry()]);
 
-      // Restore override selection from DB
       const overrideRow = ((data as any[]) || []).find((t: any) => t.is_override);
       setOverrideEntryId(overrideRow ? overrideRow.id : null);
 
@@ -278,6 +281,8 @@ const TariffPopup: React.FC<{
           overrideSlot: overrideIdx >= 0 ? overrideIdx : null };
       });
       setBulkRows(rows);
+      // Reset fill row when data loads fresh
+      setGlobalFill({ from: '', to: '', rate: '', deposit: '' });
       setBulkLoading(false);
     };
     load();
@@ -291,7 +296,6 @@ const TariffPopup: React.FC<{
 
   const removeEntry = (id: string) => {
     setEntries(prev => prev.length > 1 ? prev.filter(e => e.id !== id) : prev);
-    // Clear override if we just removed the override entry
     setOverrideEntryId(prev => prev === id ? null : prev);
   };
 
@@ -300,7 +304,6 @@ const TariffPopup: React.FC<{
     const filled = entries.filter(e => e.rate.trim() !== '');
     if (filled.length === 0) { toast.error('Enter a rate for at least one tariff.'); return; }
 
-    // If overlap exists, require an override to be selected
     if (entriesHaveOverlap(entries) && !overrideEntryId) {
       toast.error('Date ranges overlap — please select which period should be the active tariff.');
       return;
@@ -308,7 +311,6 @@ const TariffPopup: React.FC<{
 
     setSaving(true);
     try {
-      // Delete removed existing entries
       const keepIds = entries.filter(e => !e.isNew).map(e => e.id);
       const { data: dbRows } = await supabase
         .from('tariffs').select('id')
@@ -319,7 +321,6 @@ const TariffPopup: React.FC<{
         }
       }
 
-      // Upsert each filled entry
       for (const entry of filled) {
         const fromDate   = entry.from || today;
         const isOverride = overrideEntryId === entry.id;
@@ -346,7 +347,6 @@ const TariffPopup: React.FC<{
         }
       }
 
-      // Update model base rate: use override entry's rate, else first filled
       const baseEntry = filled.find(e => e.id === overrideEntryId) || filled[0];
       await supabase.from('models')
         .update({ base_rate_per_day: parseFloat(baseEntry.rate) })
@@ -466,7 +466,7 @@ const TariffPopup: React.FC<{
               </div>
             ) : (
               <>
-                {/* Column headers — no Override column */}
+                {/* Column headers */}
                 <div
                   className="grid shrink-0 px-8 py-2.5 text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase bg-[#F9F9FF] border-b border-[#d1d0eb]/20"
                   style={{ gridTemplateColumns: '1.5fr 1.5fr 1.3fr 1.3fr 1.5fr auto' }}>
@@ -491,61 +491,36 @@ const TariffPopup: React.FC<{
                         className="grid items-center py-3 gap-x-2"
                         style={{ gridTemplateColumns: '1.5fr 1.5fr 1.3fr 1.3fr 1.5fr auto' }}
                       >
-                        {/* From */}
                         <div>
-                          <input
-                            type="date"
-                            value={entry.from}
+                          <input type="date" value={entry.from}
                             onChange={e => updateEntry(entry.id, 'from', e.target.value)}
-                            className={inputCls}
-                          />
+                            className={inputCls} />
                         </div>
-                        {/* To */}
                         <div>
-                          <input
-                            type="date"
-                            value={entry.to}
-                            min={entry.from}
+                          <input type="date" value={entry.to} min={entry.from}
                             onChange={e => updateEntry(entry.id, 'to', e.target.value)}
-                            className={inputCls}
-                          />
+                            className={inputCls} />
                         </div>
-                        {/* Rate */}
                         <div>
-                          <input
-                            type="number"
-                            value={entry.rate}
+                          <input type="number" value={entry.rate}
                             onChange={e => updateEntry(entry.id, 'rate', e.target.value)}
-                            placeholder="2500"
-                            min="0"
-                            className={inputCls + ' font-bold'}
-                          />
+                            placeholder="2500" min="0"
+                            className={inputCls + ' font-bold'} />
                         </div>
-                        {/* Deposit */}
                         <div>
-                          <input
-                            type="number"
-                            value={entry.deposit}
+                          <input type="number" value={entry.deposit}
                             onChange={e => updateEntry(entry.id, 'deposit', e.target.value)}
-                            placeholder="5000"
-                            min="0"
-                            className={inputCls + ' font-bold'}
-                          />
+                            placeholder="5000" min="0"
+                            className={inputCls + ' font-bold'} />
                         </div>
-                        {/* Notes */}
                         <div>
-                          <input
-                            type="text"
-                            value={entry.notes}
+                          <input type="text" value={entry.notes}
                             onChange={e => updateEntry(entry.id, 'notes', e.target.value)}
                             placeholder="Note..."
-                            className={inputCls}
-                          />
+                            className={inputCls} />
                         </div>
-                        {/* Delete */}
                         <div className="w-8 flex justify-center">
-                          <button
-                            onClick={() => removeEntry(entry.id)}
+                          <button onClick={() => removeEntry(entry.id)}
                             className="p-1 text-[#cbd5e1] hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
                             <Trash2 size={13} />
                           </button>
@@ -557,8 +532,7 @@ const TariffPopup: React.FC<{
 
                 {/* Add row button */}
                 <div className="px-8 pt-3 pb-1 shrink-0">
-                  <button
-                    onClick={addEntry}
+                  <button onClick={addEntry}
                     className="flex items-center space-x-2 text-[#6360DF] hover:bg-[#EEEDFA] px-4 py-2 rounded-xl text-xs font-bold transition-all border border-dashed border-[#6360DF]/40 w-full justify-center">
                     <Plus size={13} /><span>Add Another Tariff Period</span>
                   </button>
@@ -566,7 +540,7 @@ const TariffPopup: React.FC<{
               </>
             )}
 
-            {/* ── Override section — same logic as bulk, for single model ── */}
+            {/* Override section */}
             {!loading && (
               <OverrideSection
                 entries={entries}
@@ -578,14 +552,11 @@ const TariffPopup: React.FC<{
 
             {/* Footer */}
             <div className="px-8 py-5 border-t border-[#d1d0eb]/30 flex space-x-3 shrink-0">
-              <button
-                onClick={onClose}
+              <button onClick={onClose}
                 className="flex-1 border border-[#d1d0eb] text-[#6c7e96] font-bold py-3 rounded-xl hover:bg-slate-50 text-sm transition-all">
                 Cancel
               </button>
-              <button
-                onClick={handleSaveSingle}
-                disabled={saving || loading}
+              <button onClick={handleSaveSingle} disabled={saving || loading}
                 className="flex-1 bg-[#6360DF] hover:bg-[#5451d0] text-white font-bold py-3 rounded-xl text-sm shadow-lg shadow-[#6360df22] transition-all flex items-center justify-center space-x-2 disabled:opacity-60">
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
                 <span>{saving ? 'Saving...' : 'Save Tariff'}</span>
@@ -594,7 +565,7 @@ const TariffPopup: React.FC<{
           </div>
         )}
 
-        {/* ── BULK MODEL VIEW (unchanged) ── */}
+        {/* ── BULK MODEL VIEW ── */}
         {!isSingle && (
           <div className="flex flex-col flex-1 overflow-hidden">
             {bulkLoading ? (
@@ -611,6 +582,7 @@ const TariffPopup: React.FC<{
                 <div ref={scrollRef} className="overflow-x-auto overflow-y-auto flex-1">
                   <table className="min-w-full border-collapse">
                     <thead>
+                      {/* ── Column header row (unchanged) ── */}
                       <tr className="bg-[#F9F9FF] border-b border-[#d1d0eb]/30">
                         <th className="sticky left-0 z-10 bg-[#F9F9FF] text-left px-6 py-3.5 text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase whitespace-nowrap min-w-[190px]">Vehicle</th>
                         <th className="text-left px-4 py-3.5 text-[10px] font-bold text-[#6c7e96] tracking-widest uppercase whitespace-nowrap min-w-[90px]">Trans.</th>
@@ -639,7 +611,107 @@ const TariffPopup: React.FC<{
                           </button>
                         </th>
                       </tr>
+
+                      {/* ── Global fill row (NEW) ─────────────────────────────────
+                          Type a value here to instantly fill ALL model rows for
+                          that period slot. Per-row editing still works independently. */}
+                      <tr className="bg-[#EEEDFA]/60 border-b border-[#d1d0eb]/30">
+                        {/* "Fill All" label cell — sticky to match Vehicle column */}
+                        <td className="sticky left-0 z-10 bg-[#EEEDFA]/60 px-6 py-2.5 whitespace-nowrap min-w-[190px]">
+                          <span className="text-[10px] font-extrabold text-[#6360DF] tracking-widest uppercase">Fill All</span>
+                        </td>
+                        {/* Trans. and Fuel cells — empty spacers */}
+                        <td className="px-4 py-2.5 min-w-[90px]" />
+                        <td className="px-4 py-2.5 min-w-[80px] border-r-2 border-[#c7c6f0]" />
+                        {/* One set of From/To/Rate/Deposit inputs per period slot */}
+                        {Array.from({ length: periodCount }, (_, slotIdx) => (
+                          <React.Fragment key={`gf-${slotIdx}`}>
+                            {/* From */}
+                            <td className="px-3 py-2.5 whitespace-nowrap min-w-[128px]">
+                              <input
+                                type="date"
+                                value={globalFill.from}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setGlobalFill(prev => ({ ...prev, from: val }));
+                                  setBulkRows(prev => prev.map(row => ({
+                                    ...row,
+                                    periods: row.periods.map(p =>
+                                      p.slotIndex === slotIdx ? { ...p, from: val } : p
+                                    ),
+                                  })));
+                                }}
+                                className="w-full bg-white border border-[#6360DF]/40 rounded-xl py-1.5 px-3 text-xs font-medium text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10 min-w-[116px]"
+                              />
+                            </td>
+                            {/* To */}
+                            <td className="px-3 py-2.5 whitespace-nowrap min-w-[128px]">
+                              <input
+                                type="date"
+                                value={globalFill.to}
+                                min={globalFill.from}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setGlobalFill(prev => ({ ...prev, to: val }));
+                                  setBulkRows(prev => prev.map(row => ({
+                                    ...row,
+                                    periods: row.periods.map(p =>
+                                      p.slotIndex === slotIdx ? { ...p, to: val } : p
+                                    ),
+                                  })));
+                                }}
+                                className="w-full bg-white border border-[#6360DF]/40 rounded-xl py-1.5 px-3 text-xs font-medium text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10 min-w-[116px]"
+                              />
+                            </td>
+                            {/* Rate */}
+                            <td className="px-3 py-2.5 whitespace-nowrap min-w-[108px]">
+                              <input
+                                type="number"
+                                value={globalFill.rate}
+                                min="0"
+                                placeholder="₹ all"
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setGlobalFill(prev => ({ ...prev, rate: val }));
+                                  setBulkRows(prev => prev.map(row => ({
+                                    ...row,
+                                    periods: row.periods.map(p =>
+                                      p.slotIndex === slotIdx ? { ...p, rate: val } : p
+                                    ),
+                                  })));
+                                }}
+                                className="w-full bg-white border border-[#6360DF]/40 rounded-xl py-1.5 px-3 text-xs font-bold text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10 min-w-[88px]"
+                              />
+                            </td>
+                            {/* Deposit */}
+                            <td className={`px-3 py-2.5 whitespace-nowrap min-w-[108px] ${slotIdx < periodCount - 1 ? 'border-r-2 border-[#6360DF]/25' : ''}`}>
+                              <input
+                                type="number"
+                                value={globalFill.deposit}
+                                min="0"
+                                placeholder="₹ all"
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setGlobalFill(prev => ({ ...prev, deposit: val }));
+                                  setBulkRows(prev => prev.map(row => ({
+                                    ...row,
+                                    periods: row.periods.map(p =>
+                                      p.slotIndex === slotIdx ? { ...p, deposit: val } : p
+                                    ),
+                                  })));
+                                }}
+                                className="w-full bg-white border border-[#6360DF]/40 rounded-xl py-1.5 px-3 text-xs font-bold text-[#151a3c] outline-none focus:border-[#6360DF] focus:ring-2 focus:ring-[#6360DF]/10 min-w-[88px]"
+                              />
+                            </td>
+                          </React.Fragment>
+                        ))}
+                        {/* Edit and + column spacers */}
+                        <td className="px-4 py-2.5 min-w-[52px]" />
+                        <td className="px-4 py-2.5 min-w-[48px]" />
+                      </tr>
+                      {/* ── End global fill row ── */}
                     </thead>
+
                     <tbody className="divide-y divide-[#d1d0eb]/15">
                       {bulkRows.map(row => {
                         const isEditing = editingRowId === row.modelId;
@@ -1115,7 +1187,7 @@ const VehicleDetailView: React.FC<{
   );
 };
 
-// ── FleetListing  (main — UNCHANGED) ──────────────────────────
+// ── FleetListing (main — UNCHANGED) ──────────────────────────
 const FleetListing: React.FC = () => {
   const [view, setView] = useState<'list' | 'detail' | 'add' | 'profile'>('list');
   const [selectedVehicle, setSelectedVehicle] = useState<any>(null);
