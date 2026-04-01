@@ -315,7 +315,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
         {/* Logo */}
         <div className="mb-8 px-1 pt-2">
           <img
-            src="/logo-colorr.png"
+            src="/assets/logo-colorr.png"
             alt="GaadiZai"
             className="w-full object-contain"
             style={{ mixBlendMode: 'multiply', maxHeight: '90px' }}
