@@ -290,8 +290,8 @@ const CreateNewBooking: React.FC<CreateNewBookingProps> = ({ onBack, onConfirm }
 
   useEffect(() => { loadFleet(); }, []);
 
-  
-  console.log('hello');
+
+  // console.log('hello');
   
   // Sync day + night charge values when location changes
   useEffect(() => {
