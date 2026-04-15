@@ -4,7 +4,7 @@ import {
   Menu, X, Plus, Calendar, Grid3X3, LogOut, User, Mail, Phone,
   Briefcase, MapPin as MapPinIcon, Save, ChevronDown, TrendingUp,
   AlertTriangle, CheckCircle2, Clock, ArrowRight, RefreshCw,
-  Loader2, MoreVertical
+  Loader2, MoreVertical, BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -16,6 +16,7 @@ import DriversPage from './DriversPage';
 import AllocationPage from './AllocationPage';
 import RemindersPage from './RemindersPage';
 import HandoverPage from './HandoverPage';
+import ReportsPage from './ReportsPage';
 import { ClipboardList } from 'lucide-react';
 import VehiclesPage from './VehiclesPage';
 import UsersPage from './Userspage';
@@ -141,6 +142,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
     { icon: <Users />, label: 'Drivers' },
     { icon: <Grid3X3 />, label: 'Allocation' },
     { icon: <Bell />, label: 'Reminders' },
+    { icon: <BarChart3 />, label: 'Reports' },
     { icon: <ClipboardList />, label: 'Handover' },
     { icon: <Settings />, label: 'Settings' },
     { icon: <Users />, label: 'Users' },
@@ -746,6 +748,9 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
             {activeTab === 'Reminders' && (
               <motion.div key="reminders" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}><RemindersPage /></motion.div>
             )}
+            {activeTab === 'Reports' && (
+              <motion.div key="reports" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}><ReportsPage /></motion.div>
+            )}
             {activeTab === 'Handover' && (
               <motion.div key="handover" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.3 }}>
               <HandoverPage />
@@ -759,7 +764,7 @@ const Dashboard: React.FC<{ onLogout?: () => void; initialProfile: UserProfile }
     <Settingspage />
   </motion.div>
 )}
-{!['Dashboard','Fleet Listing','Vehicles','Bookings','Drivers','Allocation','Reminders','Handover','Settings','Users'].includes(activeTab) && (
+{!['Dashboard','Fleet Listing','Vehicles','Bookings','Drivers','Allocation','Reminders','Reports','Handover','Settings','Users'].includes(activeTab) && (
               <motion.div key="coming-soon" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.3 }}
                 className="h-full flex flex-col items-center justify-center text-center py-20">
                 <div className="w-20 h-20 bg-[#EEEDFA] rounded-3xl flex items-center justify-center mb-6 text-[#6360DF]">
